@@ -1,0 +1,18 @@
+# Dependencies and build artifacts
+node_modules/
+dist/
+*.tgz
+.tmp/
+*.log
+
+# OS noise
+Thumbs.db
+.DS_Store
+
+# Internal research notes and local dev helpers (not part of the published plugin)
+research/
+tools/
+
+# Manual end-to-end scratch projects and development screenshots
+test/e2e/
+test/shots/

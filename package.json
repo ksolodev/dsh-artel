@@ -1,0 +1,65 @@
+{
+  "name": "dsh-artel",
+  "version": "0.1.0",
+  "description": "Run coding agents in a separate copy of your project: Solo or Swarm, review the changes, apply them yourself.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ksolodev/dsh-artel.git"
+  },
+  "homepage": "https://github.com/ksolodev/dsh-artel#readme",
+  "bugs": {
+    "url": "https://github.com/ksolodev/dsh-artel/issues"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "icon.svg",
+    "locale/*.json",
+    "README.md",
+    "CHANGELOG.md",
+    "lib/client.js",
+    "lib/index.js",
+    "lib/*.js",
+    "cordis.patch.yml",
+    "docs/*.md",
+    "docs/*.svg",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-bundle",
+    "dsh-plugin",
+    "deepseek-harness",
+    "coding-agent",
+    "multi-agent",
+    "swarm",
+    "code-review",
+    "ai-agents"
+  ],
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": "^0.2.2-rc.1"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": []
+    }
+  }
+}

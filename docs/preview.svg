@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="previewTitle previewDesc" font-family="Segoe UI, system-ui, -apple-system, sans-serif">
+  <title id="previewTitle">dsh-artel</title>
+  <desc id="previewDesc">Coding agents in an isolated copy of your project. Review the diff, apply it yourself.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b1020"/>
+      <stop offset="0.55" stop-color="#0d1328"/>
+      <stop offset="1" stop-color="#141b38"/>
+    </linearGradient>
+    <radialGradient id="glowA" cx="0.16" cy="0.12" r="0.7">
+      <stop offset="0" stop-color="#6366f1" stop-opacity="0.38"/>
+      <stop offset="1" stop-color="#6366f1" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowB" cx="0.92" cy="0.92" r="0.62">
+      <stop offset="0" stop-color="#22d3ee" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="iconInk" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a5b4fc"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+    <linearGradient id="chip" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1e293b"/>
+      <stop offset="1" stop-color="#172033"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <rect width="1280" height="640" fill="url(#glowA)"/>
+  <rect width="1280" height="640" fill="url(#glowB)"/>
+
+  <!-- icon -->
+  <g transform="translate(88 84) scale(4.4)" fill="none" stroke="url(#iconInk)" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="2.75" y="7.25" width="12.5" height="13.5" rx="2.4" opacity="0.5"/>
+    <path d="M6.75 4.25 h9.5 a2.5 2.5 0 0 1 2.5 2.5 v9.5"/>
+    <path d="M6.25 13.5 l2.6 2.6 L14 10.8"/>
+  </g>
+
+  <!-- title block -->
+  <text x="88" y="330" font-size="94" font-weight="700" letter-spacing="-2" fill="#f8fafc">Artel</text>
+  <text x="90" y="392" font-size="31" fill="#c7d2fe">Review the diff. Apply it yourself.</text>
+  <text x="90" y="440" font-size="20" fill="#8b99b8">Coding agents in an isolated copy of your project</text>
+
+  <!-- chips -->
+  <g font-size="17" fill="#cbd5e1" text-anchor="middle">
+    <rect x="88" y="478" width="82" height="40" rx="20" fill="url(#chip)" stroke="#2b3a5c"/>
+    <text x="129" y="504">Solo</text>
+    <rect x="182" y="478" width="98" height="40" rx="20" fill="url(#chip)" stroke="#2b3a5c"/>
+    <text x="231" y="504">Swarm</text>
+    <rect x="292" y="478" width="152" height="40" rx="20" fill="url(#chip)" stroke="#2b3a5c"/>
+    <text x="368" y="504">Per-file diff</text>
+    <rect x="456" y="478" width="150" height="40" rx="20" fill="url(#chip)" stroke="#2b3a5c"/>
+    <text x="531" y="504">Manual Apply</text>
+  </g>
+
+  <!-- mock run panel -->
+  <g>
+    <rect x="724" y="104" width="468" height="432" rx="18" fill="#0e1526" stroke="#26324f"/>
+    <rect x="724" y="104" width="468" height="52" rx="18" fill="#111a2e"/>
+    <rect x="724" y="138" width="468" height="18" fill="#111a2e"/>
+    <circle cx="756" cy="130" r="6" fill="#f87171" opacity="0.85"/>
+    <circle cx="776" cy="130" r="6" fill="#fbbf24" opacity="0.85"/>
+    <circle cx="796" cy="130" r="6" fill="#34d399" opacity="0.85"/>
+    <text x="826" y="136" font-size="15" fill="#94a3b8">Artel · run · Swarm</text>
+    <circle cx="1152" cy="130" r="5" fill="#34d399"/>
+    <text x="1138" y="136" font-size="14" fill="#64748b" text-anchor="end">live</text>
+  </g>
+
+  <!-- feed -->
+  <g font-size="15">
+    <text x="752" y="192" fill="#93c5fd">Vega</text>
+    <text x="806" y="192" fill="#94a3b8">planning · src/app/settings/**</text>
+    <text x="752" y="222" fill="#67e8f9">Orion</text>
+    <text x="812" y="222" fill="#94a3b8">OWNERSHIP: src/screens/**</text>
+    <text x="752" y="252" fill="#fca5a5">Lyra</text>
+    <text x="800" y="252" fill="#94a3b8">editing tests/settings.test.ts</text>
+    <circle cx="746" cy="252" r="3" fill="#fca5a5"/>
+  </g>
+
+  <!-- diff card -->
+  <g>
+    <rect x="748" y="282" width="420" height="226" rx="12" fill="#0b1220" stroke="#1f2a44"/>
+    <text x="770" y="312" font-size="14" fill="#e2e8f0" font-family="Cascadia Code, Consolas, monospace">src/app/settings.tsx</text>
+    <text x="1146" y="312" font-size="13" fill="#4ade80" text-anchor="end">+12 −4</text>
+    <line x1="748" y1="330" x2="1168" y2="330" stroke="#1f2a44"/>
+    <g font-family="Cascadia Code, Consolas, monospace" font-size="13.5">
+      <rect x="748" y="338" width="420" height="24" fill="#3f1d24" opacity="0.55"/>
+      <text x="770" y="355" fill="#fca5a5">-  const theme = 'light'</text>
+      <rect x="748" y="362" width="420" height="24" fill="#12301f" opacity="0.6"/>
+      <text x="770" y="379" fill="#86efac">+  const theme = await loadTheme()</text>
+      <text x="770" y="403" fill="#64748b">   return (</text>
+      <text x="770" y="427" fill="#64748b">     &lt;Settings</text>
+      <rect x="748" y="434" width="420" height="24" fill="#12301f" opacity="0.6"/>
+      <text x="770" y="451" fill="#86efac">+      theme={theme}</text>
+      <text x="770" y="475" fill="#64748b">       onChange={onChange}</text>
+    </g>
+  </g>
+
+  <!-- footer -->
+  <text x="1192" y="600" font-size="15" fill="#64748b" text-anchor="end">dsh-artel · DeepSeek Harness plugin</text>
+  <text x="88" y="600" font-size="15" fill="#64748b">github.com/ksolodev/dsh-artel</text>
+</svg>

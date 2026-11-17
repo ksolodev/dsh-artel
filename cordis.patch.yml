@@ -1,0 +1,12 @@
+# Artel bundle.
+#
+# This file is the bundle patch: `dsh.bundle.patch` in package.json points here,
+# and the plugin CLI appends this package to the profile's `dsh.profile.bundles`
+# when it is installed.
+#
+# The row id must match the Host plugin's `export const name` (`dsh-artel` in
+# lib/index.js). Keep the config block empty here: settings live in the plugin
+# details page, and the client reads them through the plugin's own routes.
+- insert:
+    - id: dsh-artel
+      name: dsh-artel

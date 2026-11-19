@@ -12,14 +12,54 @@ import {
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
 
-/** Minimal fake Host services: session controller, agent registry, subagent runtime. */
+/** Minimal fake Session: records the durable policy events Artel appends. */
+function fakeSession(id, mode = 'read-only') {
+  const session = {
+    id,
+    header: { id },
+    mode,
+    appended: [],
+    append(type, data) {
+      session.appended.push({ type, data })
+      if (type === 'sandbox/mode') session.mode = data.mode
+      return { type, data }
+    },
+  }
+  return session
+}
+
+/** Minimal fake Host services: session controller, agent registry, subagent runtime, policies. */
 function fakeHost(options = {}) {
-  const calls = { created: [], renames: [], prompts: [], cancels: [], activations: [], memberPrompts: [], interrupts: [] }
+  const calls = {
+    created: [],
+    renames: [],
+    prompts: [],
+    cancels: [],
+    activations: [],
+    memberPrompts: [],
+    interrupts: [],
+    policies: [],
+  }
   const liveAgents = new Map()
+  const sessions = new Map()
+  const sessionOf = (sessionId, mode) => {
+    let session = sessions.get(sessionId)
+    if (session === undefined) {
+      session = fakeSession(sessionId, mode)
+      sessions.set(sessionId, session)
+    }
+    return session
+  }
+  const parentAgent = {
+    id: options.parentSessionId ?? 'session-1',
+    session: sessionOf(options.parentSessionId ?? 'session-1', options.parentMode ?? 'workspace-write'),
+  }
+  liveAgents.set(parentAgent.id, parentAgent)
   const controller = {
     async create(request) {
       calls.created.push(request)
-      const agent = { id: request.sessionId }
+      const session = sessionOf(request.sessionId, options.childMode ?? 'read-only')
+      const agent = options.noSessions === true ? { id: request.sessionId } : { id: request.sessionId, session }
       liveAgents.set(request.sessionId, agent)
       return { sessionId: request.sessionId }
     },
@@ -34,8 +74,6 @@ function fakeHost(options = {}) {
       return Promise.resolve()
     },
   }
-  const parentAgent = { id: options.parentSessionId ?? 'session-1' }
-  liveAgents.set(parentAgent.id, parentAgent)
   const agents = {
     get(sessionId) {
       return liveAgents.get(sessionId)
@@ -47,8 +85,13 @@ function fakeHost(options = {}) {
     },
     async startActivation(spec) {
       calls.activations.push(spec)
+      // The real runtime attaches the child Session before the activation
+      // resolves; the fake does the same so the driver can reach it.
+      const childId = options.childId ?? 'member-1'
+      const childSession = sessionOf(childId, options.memberMode ?? 'read-only')
+      liveAgents.set(childId, { id: childId, session: childSession })
       return {
-        childId: options.childId ?? 'member-1',
+        childId,
         name: spec.name,
         result: Promise.resolve({ ok: true }),
         dispose: async () => {},
@@ -65,12 +108,25 @@ function fakeHost(options = {}) {
       calls.interrupts.push({ sessionId, authority })
     },
   }
+  const approval = options.noApproval === true ? undefined : {
+    setPolicy(agent, policy) {
+      calls.policies.push({ agentId: agent?.id, policy })
+    },
+  }
+  const sandboxPolicy = options.noSandbox === true ? undefined : {
+    resolve(request = {}) {
+      return { mode: request.session?.mode ?? 'read-only', workspaceRoot: 'C:\\workspace' }
+    },
+  }
   const handlers = new Map()
   const ctx = {
     get(name) {
       if (name === 'sessionController') return options.noController === true ? undefined : controller
       if (name === 'agents') return agents
       if (name === 'subagents') return options.peers === false ? undefined : subagents
+      if (name === 'sessions') return options.noSessions === true ? undefined : { get: (sessionId) => sessions.get(sessionId) }
+      if (name === 'approval') return approval
+      if (name === 'sandboxPolicy') return sandboxPolicy
       return undefined
     },
     on(event, handler) {
@@ -78,7 +134,7 @@ function fakeHost(options = {}) {
       return () => handlers.delete(event)
     },
   }
-  return { ctx, calls, handlers, parentAgent, subagents }
+  return { ctx, calls, handlers, parentAgent, subagents, sessions, agents }
 }
 
 test('mapSessionEvent turns durable events into feed events', () => {
@@ -193,6 +249,67 @@ test('a Session agent is created, titled and prompted through the controller', a
   await driver.dispose()
 })
 
+test('a child Session is made unattended and inherits the chat sandbox mode', async () => {
+  const host = fakeHost({ parentSessionId: 'session-chat', parentMode: 'danger-full-access' })
+  const warns = []
+  const driver = new HostDriver(host.ctx, { log: { warn: (message) => warns.push(message) } })
+  await driver.init()
+  const handle = await driver.createAgent({
+    name: 'Vega',
+    mode: 'solo',
+    projectPath: 'C:\\project',
+    copyPath: 'C:\\copy',
+    agentId: 'a1',
+    parentSessionId: 'session-chat',
+  })
+  const child = host.sessions.get(handle.sessionId)
+  assert.deepEqual(
+    host.calls.policies,
+    [{ agentId: handle.sessionId, policy: 'never' }],
+    'the ApprovalService is asked to auto-reject instead of waiting for a human',
+  )
+  assert.deepEqual(
+    child.appended,
+    [{ type: 'sandbox/mode', data: { mode: 'danger-full-access' } }],
+    'the child works under the same sandbox mode as the chat that started the run',
+  )
+  assert.equal(child.mode, 'danger-full-access')
+  assert.deepEqual(warns, [])
+  await driver.dispose()
+})
+
+test('without the approval service the durable policy event is appended', async () => {
+  const host = fakeHost({ noApproval: true })
+  const driver = new HostDriver(host.ctx, { log: { warn() {} } })
+  await driver.init()
+  const handle = await driver.createAgent({
+    name: 'Vega',
+    mode: 'solo',
+    projectPath: 'C:\\project',
+    copyPath: 'C:\\copy',
+    agentId: 'a1',
+  })
+  const child = host.sessions.get(handle.sessionId)
+  assert.deepEqual(child.appended, [{ type: 'approval/policy', data: { policy: 'never' } }])
+  await driver.dispose()
+})
+
+test('making a child unattended never breaks agent creation', async () => {
+  const host = fakeHost({ noSessions: true })
+  const driver = new HostDriver(host.ctx, { log: { warn() {} } })
+  await driver.init()
+  const handle = await driver.createAgent({
+    name: 'Vega',
+    mode: 'solo',
+    projectPath: 'C:\\project',
+    copyPath: 'C:\\copy',
+    agentId: 'a1',
+  })
+  assert.equal(handle.kind, 'session')
+  assert.equal(host.calls.created.length, 1)
+  await driver.dispose()
+})
+
 test('a swarm member is spawned as a continuable subagent of the lead Session', async () => {
   const host = fakeHost()
   const driver = new HostDriver(host.ctx, { log: { warn() {} } })
@@ -225,6 +342,42 @@ test('a swarm member is spawned as a continuable subagent of the lead Session', 
   assert.equal(spec.delivery, 'caller', 'the lead is not pinged when a member finishes a turn')
   assert.equal(spec.cwd, 'C:\\copy')
   assert.deepEqual(spec.prompt, [{ type: 'text', text: 'plan the work' }])
+  await driver.dispose()
+})
+
+test('a spawned swarm member is made unattended like the lead', async () => {
+  const host = fakeHost({ parentSessionId: 'session-chat', parentMode: 'danger-full-access' })
+  const driver = new HostDriver(host.ctx, { log: { warn() {} } })
+  await driver.init()
+  const lead = await driver.createAgent({
+    name: 'Vega',
+    mode: 'swarm',
+    projectPath: 'C:\\project',
+    copyPath: 'C:\\copy',
+    agentId: 'a1',
+    parentSessionId: 'session-chat',
+  })
+  const member = await driver.spawnMember({
+    parent: lead,
+    name: 'orion',
+    displayName: 'Orion',
+    promptText: 'plan the work',
+    copyPath: 'C:\\copy',
+    projectPath: 'C:\\project',
+    agentId: 'a2',
+    mode: 'swarm',
+  })
+  assert.deepEqual(
+    host.calls.policies.at(-1),
+    { agentId: member.sessionId, policy: 'never' },
+    'the subagent child auto-rejects escalations too',
+  )
+  const memberSession = host.sessions.get(member.sessionId)
+  assert.ok(
+    memberSession.appended.some((entry) => entry.type === 'sandbox/mode' && entry.data.mode === 'danger-full-access'),
+    'the member inherits the sandbox mode through its lead Session',
+  )
+  assert.equal(memberSession.mode, 'danger-full-access')
   await driver.dispose()
 })
 

@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Artel",
-    "description": "Run a development task in an isolated copy of your project: one agent on its own, or three agents sharing one copy and dividing the files first while they message each other. Watch the live feed, review the diff line by line, then apply what you choose. Open the Artel tab from the session header.",
+    "description": "Run a development task in an isolated copy of your project: one agent on its own, or three agents sharing one copy and dividing the files first while they message each other. Watch the live feed of full agent replies, review the diff line by line, then apply the result or discard it. Open Artel with the button next to the chat composer.",
     "detail": "docs/guide.md"
   }
 }

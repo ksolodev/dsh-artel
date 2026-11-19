@@ -1,9 +1,11 @@
 # dsh-artel — architecture (working plan)
 
-Status: v0.1 shipped. This is the design and implementation plan, kept for contributors. Where it
+Status: v0.1 shipped; v0.2 (in-chat artel) is in progress on branch `feat/artel-in-chat`. This is the
+design and implementation plan, kept for contributors. Where it
 describes an earlier iteration and differs from the shipped code — for example, run copies are plain
 directory copies (not git worktrees) and run state lives under `<DSH_HOME>/artel/<profile>` — the
-README and the source are authoritative.
+README and the source are authoritative. The v0.2 UX/architecture change is specified in
+`docs/artel-in-chat/DESIGN.md`.
 
 ## What it is
 
@@ -14,27 +16,51 @@ A DSH bundle plugin (`dsh-artel`) that turns "develop this in my project" into a
 
 The real project is never written by an agent: agents run with cwd = copy. Apply is a user action, in our UI.
 
-## Entry point / surface
+## Entry point / surface (v0.2 — artel works from the chat)
 
-- Right-sidebar **tab type** (session-scoped): `id: 'dsh-artel'`, `kind: 'artel'`, claimed via a `dsh-resource://artel/...` address, registered with `ctx.sidebarRightTabs.register` + keyed `sidebar.right.pane.tab` body + `sidebar.right.pane.tab.title`.
-- Guide entry (`guide: { order, title(), description(), icon? }`) so it is discoverable from the right sidebar's guide page.
-- Optionally also reachable from our own conversation-side button later; commands are a stretch goal.
-- The tab is opened by the user (`ctx.sidebarRight.openTab`/`openResource`) and can be widened/fullscreened via the sidebar controls; the page is laid out to work at ~420px wide and at fullscreen.
+Artel lives inside the chat, not in the right sidebar:
 
-Because the tab is session-scoped, "the project" = the current session's working directory. No project picker in v1.
+- **Launcher**: a button in the standard composer tool row (`conversation.input.left`, entry id
+  `artel-launcher`, registered by the client bundle). Click opens the artel surface.
+- **Surface**: a full-bleed overlay over the conversation region, portalled to `document.body` and
+  positioned from `[data-conversation-content]`. It is rendered by the same `conversation.input.left`
+  entry as the launcher (the composer dock slots do not exist in the hero/blank phase, so the
+  launcher entry is the only mount point present everywhere). It works on a blank/new session and on
+  an active one; the standard composer stays mounted underneath and returns instantly on close
+  («← Чат»).
+- Why not a `conversation.view`: `DefaultConversationViews` renders nothing for a blank session
+  (`session.blank` → `null`), so a hero/launch screen could never appear in a fresh chat; view
+  activation would also need an extra, not-yet-verified API (`uiConversation.binding(id).activate`).
+  The overlay has none of those constraints. See `docs/artel-in-chat/DESIGN.md`.
+- The v0.1 right-sidebar tab type (`dsh-artel`/`artel`, `sidebar.right.pane.tab` body/title), its
+  guide entry and the conversation-header action are removed in v0.2.
 
-## UX
+Surface layout: a left **rail** of this session's artel runs (status dot, title, meta
+`Solo · 3/6 · phase`, «+ Новая артель») and a workspace — hero for a new run, run page for an
+existing one. "The project" is still the current session's working directory (fallback: the
+plugin's default working directory), resolved by the host (`GET /project`), no project picker.
 
-### Empty state
-Title, one-sentence explanation, mode picker (Solo / Swarm with 1 line each), task textarea ("Write the task as you would to a colleague"), Start button. Below: previous runs for this session.
+## UX (v0.2)
+
+### Empty state — hero for a new run
+Title «Новая артель в <проект>», one-line explanation, mode picker (Solo / Swarm with 1 line each),
+task textarea («Опишите задачу, как коллеге»), primary button «Поехали →». The rail below shows
+previous runs of this session.
 
 ### Run page (both modes)
-- Header: mode chip, status chip (`preparing`, `planning`, `running`, `waiting for you`, `done`, `failed`, `applied`, `discarded`), project path, "open conversation" per agent.
-- **Feed**: append-only lines — agent messages, tool calls (one line each: name + target), user messages, status changes. Incremental polling with a cursor. For swarm, each line is prefixed by the agent's name/color.
-- **Composer**: message box that sends to the run (solo: the agent; swarm: broadcast or per-agent selector). "Leave a remark" is the same box — it wakes a finished solo agent too.
-- **Changes**: file list with +N/−M, expandable per-file unified diff, colored with theme tokens. Refresh button. Empty state "no changes yet" (this is also the swarm phase-1 state).
-- **Actions**: `Apply changes` (primary, asks for confirmation, applies all or selected files), `Discard run` (destructive, confirm). Apply only enabled when there are changes and the run is not running.
-- **Agents** (swarm): 3 rows with name, claimed files, state; collisions flagged.
+- Header: mode tag, status (`preparing`, `planning`, `running`, `waiting for you`, `done`, `failed`,
+  interrupted, applied, discarded), phase line (`phase` from the run summary), project chip, Stop.
+- **Feed**: append-only, rendered as real chat messages — each agent reply is a full message with
+  avatar, name, role and Markdown, plus compact tool rows, status rows, plan card, user messages
+  (with recipient), peer messages, collision and error rows. Cursor-based incremental polling.
+- **Composer**: artel's own composer inside the surface (recipient picker: all / a specific agent;
+  Enter sends, Shift+Enter is a newline). «Leave a remark» is the same box — it wakes a finished solo
+  agent too.
+- **Changes**: file list with +N/−M, lazy per-file unified diff, colored with theme tokens. Refresh.
+  Empty state "no changes yet" (also the swarm phase-1 state).
+- **Actions**: `Apply changes` (primary, confirmation, all or selected files), `Discard run`
+  (destructive, confirm). Apply only enabled when there are changes and the run is not running.
+- **Agents** (swarm): rows with name, claimed files, state; collisions flagged.
 
 ### Swarm turn-1 protocol (product requirement: "правок пока нет")
 1. Host creates one copy, creates the team (see **Agents** below), prompts all three with: project description, the task, and the ownership protocol — *"This is turn 1. Do not create, edit or delete any file. You can message the other agents; end your turn with one OWNERSHIP line."*
@@ -48,7 +74,7 @@ Persisted at `<DSH_HOME>/artel/runs.json` (atomic write, written on every transi
 
 ```ts
 type Mode = 'solo' | 'swarm'
-type RunStatus = 'preparing' | 'planning' | 'running' | 'waiting' | 'finished' | 'failed' | 'applied' | 'discarded'
+type RunStatus = 'preparing' | 'planning' | 'running' | 'waiting' | 'finished' | 'failed' | 'interrupted' | 'applied' | 'discarded'
 
 interface RunRecord {
   id: string
@@ -72,7 +98,7 @@ interface AgentRecord {
   role: 'solo' | 'swarm'
   kind: 'session' | 'member' // ordinary Session or subagent of the swarm lead
   claimed: string[]
-  status: 'idle' | 'running' | 'done' | 'failed'
+  status: 'starting' | 'planning' | 'working' | 'idle' | 'failed'
 }
 interface FeedEvent {
   seq: number
@@ -86,7 +112,7 @@ interface FeedEvent {
 }
 ```
 
-Feed events are kept in memory + appended to `<DSH_HOME>/artel/runs/<id>.jsonl` (capped, rotated at ~2 MB) so a reload/GUI restart still shows history. Live stream can be re-read by cursor.
+Feed events are kept in memory + appended to `<DSH_HOME>/artel/runs/<id>.jsonl` (capped, rotated at ~2 MB) so a reload/GUI restart still shows history. Live stream can be re-read by cursor. `RunSummary` (what the client gets) adds `phase`, `changeCount`, `finishedAt`, `appliedAt`, `feedSeq`/`feedFloor`; the full `RunRecord` stays host-side.
 
 ## Host ⇄ client protocol
 
@@ -96,16 +122,21 @@ All routes under `/api/dsh-artel/**`, JSON, same-origin + the connection's trust
 
 | method | path | body/query | result |
 |---|---|---|---|
+| GET | `/api/dsh-artel/health` | — | `{ ok, version, ... }` |
+| GET | `/api/dsh-artel/project` | `sessionId` | `{ projectPath, name }` (`projectPath: null` when unresolved) |
 | GET | `/api/dsh-artel/runs` | `sessionId` | `{ runs: RunSummary[] }` |
-| POST | `/api/dsh-artel/runs` | `{ sessionId, mode, task }` | `{ run }` |
-| GET | `/api/dsh-artel/runs/:id` | `sessionId`, `cursor?` | `{ run, events, cursor }` |
-| POST | `/api/dsh-artel/runs/:id/message` | `{ sessionId, text, agent? }` | `{ ok }` |
-| POST | `/api/dsh-artel/runs/:id/interrupt` | `{ sessionId, agent? }` | `{ ok }` |
-| POST | `/api/dsh-artel/runs/:id/go` | `{ sessionId }` | `{ ok }` (swarm phase 2, auto unless locked) |
-| GET | `/api/dsh-artel/runs/:id/changes` | `sessionId` | `{ files: FileChange[] }` |
-| GET | `/api/dsh-artel/runs/:id/changes/file` | `sessionId`, `path` | `{ patch }` |
-| POST | `/api/dsh-artel/runs/:id/apply` | `{ sessionId, paths? }` | `{ applied, skipped: {path,reason}[] }` |
-| POST | `/api/dsh-artel/runs/:id/discard` | `{ sessionId }` | `{ ok }` |
+| POST | `/api/dsh-artel/runs` | `{ sessionId, projectPath?, mode, task }` | 201 `{ run }` |
+| GET | `/api/dsh-artel/runs/:id` | `cursor?`, `limit?` | `{ run, feed, cursor }` |
+| POST | `/api/dsh-artel/runs/:id/messages` | `{ text, agentId? }` | `{ ok }` |
+| POST | `/api/dsh-artel/runs/:id/interrupt` | — | `{ ok }` |
+| GET | `/api/dsh-artel/runs/:id/changes` | — | `{ files: FileChange[] }` |
+| GET | `/api/dsh-artel/runs/:id/diff` | `path` | `{ patch }` |
+| POST | `/api/dsh-artel/runs/:id/apply` | `{ paths? }` | `{ ...result, run }` |
+| POST | `/api/dsh-artel/runs/:id/discard` | — | `{ ok, run }` |
+
+v0.2 additions to the summary: `phase` (last `status`/`plan` line, ≤120 chars) so the rail can show
+`Solo · 3/6 · планирует` without fetching the feed. Requests are loopback-fenced
+(`isLoopbackRequest`) and validated against the owning `sessionId`.
 
 ## Copy, diff, apply
 

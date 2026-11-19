@@ -1,6 +1,6 @@
 {
   "name": "dsh-artel",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Run coding agents in a separate copy of your project: Solo or Swarm, review the changes, apply them yourself.",
   "license": "MIT",
   "repository": {
@@ -32,6 +32,7 @@
     "cordis.patch.yml",
     "docs/*.md",
     "docs/*.svg",
+    "docs/artel-in-chat/screens/",
     "LICENSE"
   ],
   "scripts": {

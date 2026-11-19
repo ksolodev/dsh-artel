@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { RunStore, canTransition, newRunId, toSummary } from '../lib/run-store.js'
+import { RunStore, canTransition, newRunId, PHASE_MAX_LENGTH, phaseOfFeedEvent, toSummary } from '../lib/run-store.js'
 
 async function freshStore(name, options = {}) {
   const dir = path.join(process.cwd(), 'test', '.tmp', `${name}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`)
@@ -99,6 +99,35 @@ test('toSummary drops hashes and keeps the client-facing fields', async () => {
   assert.equal(summary.changeCount, 2)
   assert.equal(summary.agents[0].name, 'Vega')
   assert.equal(summary.task, 'fix the header')
+})
+
+test('toSummary carries a single-line phase and defaults to null', async () => {
+  assert.equal(toSummary(makeRun()).phase, null, 'runs from older stores have no phase')
+  assert.equal(toSummary(makeRun({ phase: 'Building the header' })).phase, 'Building the header')
+  assert.equal(toSummary(makeRun({ phase: 'line one\nline two' })).phase, 'line one line two')
+  const long = 'x'.repeat(PHASE_MAX_LENGTH + 40)
+  const capped = toSummary(makeRun({ phase: long })).phase
+  assert.equal(capped.length, PHASE_MAX_LENGTH)
+  assert.equal(capped, 'x'.repeat(PHASE_MAX_LENGTH))
+
+  const { store, dir } = await freshStore('phase')
+  const run = makeRun()
+  await store.add(run)
+  await store.patch(run.id, { phase: 'Waiting for you' })
+  const reloaded = await new RunStore({ dir }).init()
+  assert.equal(reloaded.get(run.id).phase, 'Waiting for you')
+  await fs.rm(dir, { recursive: true, force: true })
+})
+
+test('only status and plan events produce a phase hint', () => {
+  assert.equal(phaseOfFeedEvent(null), undefined)
+  assert.equal(phaseOfFeedEvent({ kind: 'assistant', text: 'hello' }), undefined)
+  assert.equal(phaseOfFeedEvent({ kind: 'tool', text: 'edit src/app.js' }), undefined)
+  assert.equal(phaseOfFeedEvent({ kind: 'status', text: '  Copying\n the   project ' }), 'Copying the project')
+  assert.equal(phaseOfFeedEvent({ kind: 'plan', text: 'Work divided.\nVega: a.js' }), 'Work divided. Vega: a.js')
+  assert.equal(phaseOfFeedEvent({ kind: 'status', text: '   ' }), undefined)
+  const phase = phaseOfFeedEvent({ kind: 'status', text: `status ${'y'.repeat(PHASE_MAX_LENGTH * 2)}` })
+  assert.equal(phase.length, PHASE_MAX_LENGTH)
 })
 
 test('remove deletes a run and its feed', async () => {

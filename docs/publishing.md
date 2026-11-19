@@ -36,11 +36,11 @@ id changed too, so an already open Forge tab will not restore.
 ## Build a release tarball
 
 ```sh
-pnpm version patch          # or minor / major
+pnpm version minor          # patch / minor / major, then commit the bump
 pnpm pack --pack-destination dist
 ```
 
-That produces `dist/<name>-<version>.tgz` (~63 KB) containing:
+That produces `dist/<name>-<version>.tgz` containing:
 
 ```text
 package.json  cordis.patch.yml  icon.svg  LICENSE  README.md
@@ -68,9 +68,18 @@ node -e "const s = require('fs').readFileSync('/tmp/artel-check/package/lib/clie
 pnpm publish --access public
 ```
 
-Then tag the release and attach the same `.tgz` to the GitHub release — dsh-market can install from
-either an npm version or a pinned release asset, and an archive install is only ever updated through
-its own source.
+If the CLI has no TTY (agent shells, CI-less sessions), the same publish goes through
+`.tmp/publish-webauth.cjs`: it publishes the packed tarball with `libnpmpublish`, answers npm's
+web-OTP challenge by opening the `authUrl` in the browser, polls `doneUrl` for the token and retries.
+It reads the account token from `.tmp/npmrc` (`//registry.npmjs.org/:_authToken=…`), so run
+`npm login --auth-type=web --userconfig .tmp/npmrc` once before it.
+
+Then tag the release and attach the same `.tgz` to the GitHub release **twice**: as
+`dsh-artel-<version>.tgz` (pinned, for anyone who wants an exact version) and as a version-free
+`dsh-artel.tgz`. The alias keeps `releases/latest/download/dsh-artel.tgz` working across releases —
+a pinned-version asset under `latest/download/` 404s the moment the next release ships, and the
+catalog entry uses that stable URL. dsh-market can install from either an npm version or a pinned
+release asset, and an archive install is only ever updated through its own source.
 
 ## Get listed in dsh-market
 
@@ -78,20 +87,23 @@ dsh-market is the market app, not the catalog. Its plugin list is fetched live f
 registry **[awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)**, and
 installs are restricted to sources listed there.
 
-1. Make the repository public, with the tarball (or npm package) installable as it stands.
-2. Open a PR against `awesome-dsh-plugin/awesome-dsh-plugin` that adds **one bullet** to the
-   category that fits — `Development & Runtime` or `Workflow & Automation` fits Artel:
+Artel is listed: its entry is `data/plugins/ksolodev__dsh-artel.yml` (category `dev`), and the
+storefront reads the plugin's own `screenshots.json` from this repository.
 
-   ```markdown
-   - [your-name/dsh-artel](https://github.com/your-name/dsh-artel) - Runs a development task in an
-     isolated copy of the project — one agent in Solo, three sharing one copy in Swarm — shows the
-     diff line by line and applies only the files you approve.
-   ```
-
-   Keep it to one sentence that is literally true of the plugin: submissions are checked against the
-   source, and the description is compared with what the code does.
-3. Their CI refreshes `https://awesome-dsh-plugin.com/plugins.json` and the npm-served
-   `dsh-plugin-catalog` index; dsh-market picks the entry up on its next open (usually within a day).
+1. The list stores one YAML file per plugin — `data/plugins/<owner>__<repo>.yml`. The READMEs are
+   generated from those files, so never edit them by hand: change only your own file.
+2. Keep the description literally true — maintainers compare it with the code:
+   `url`, `name`, `category`, a one-sentence `description.en` (+ `description.zh`, optional), and
+   optionally `tarball:` (an https `.tgz` on GitHub Releases) and `icon:` (a GitHub-hosted **raster**
+   image; SVG is refused).
+3. Point `tarball:` at the version-free asset, so it never rots:
+   `https://github.com/ksolodev/dsh-artel/releases/latest/download/dsh-artel.tgz`.
+4. Open a PR that touches only that file, and state what changed in the release — a version bump, the
+   new tarball and a corrected description go in the same PR.
+5. Their CI refreshes `https://awesome-dsh-plugin.com/index.json` (and the npm-served
+   `dsh-plugin-catalog` index), and dsh-market picks the entry up on its next open (usually within a
+   day). The npm ↔ repo link is derived from the package's `repository` field — do not hand-write an
+   `npm:` key.
 
 Listing criteria the plugin already meets: it installs with `dsh plugin add`, it declares a
 `dsh.bundle` manifest, and it works without side channels (the Host API is loopback-only and every
@@ -114,17 +126,24 @@ the client boot graph).
 ## Release checklist
 
 - [ ] `node --test test/*.test.js` — all tests green.
-- [ ] `pnpm pack` and extract the tarball; `lib/index.js` and `lib/client.js` parse from the package.
-- [ ] Install that tarball into a scratch profile, restart the host, open a chat, click **Artel** in
-      the session header: the page renders, the **Начало/Start** guide lists an Artel tile.
-- [ ] Solo run on a scratch project: feed streams, diff renders, Apply writes exactly the reviewed
-      files, Discard deletes the copy.
+- [ ] Version bumped in `package.json`, `lib/index.js` and the `CLIENT_VERSION` in `lib/client.js`;
+      `CHANGELOG.md` has a dated section for the new version.
+- [ ] `pnpm pack` and extract the tarball; `lib/index.js` and `lib/client.js` parse from the package
+      and `import()` of `lib/index.js` exposes `apply`.
+- [ ] Install that tarball into a scratch profile, restart the host, open a chat and click **Artel**
+      in the composer tool row (next to **+**): the panel opens over the chat, the **Sessions** rail
+      lists the previous runs and **+ New Artel** shows the new-run form.
+- [ ] Solo run on a scratch project: full agent replies stream into the feed, the changes card lists
+      the files, the per-file diff renders, **Apply** writes exactly those files and deletes the copy.
 - [ ] Swarm run on a scratch project: the plan turn lists owners, agents that message each other show
       up in the feed as `Agent <name> sent a message:`, all agents edit their own files, and the
       combined diff applies in one go.
-- [ ] Apply conflict check: edit a file in the project while a run waits, then Apply — Artel reports
-      that file as skipped and leaves your edit alone.
-- [ ] UI language switch (en / ru) and the plugin card title/description/icon in the plugin manager.
+- [ ] Apply conflict check: edit a file in the project while a run waits, then Apply — Artel rejects
+      the apply and reports the conflicting file, leaving your edit alone.
+- [ ] UI language switch (en / ru / zh) and the plugin card title/description/icon in the plugin
+      manager.
+- [ ] `npm publish` (or the web-OTP driver), GitHub release with both tarball assets, and the
+      awesome-dsh-plugin entry updated (`tarball:` + `description`).
 - [ ] `README.md` and `docs/guide*.md` describe the current behavior, including the limitations
       (Swarm messaging needs the lead session to stay live, interrupted runs after a restart, and the
       fallback for profiles without the subagent stack).

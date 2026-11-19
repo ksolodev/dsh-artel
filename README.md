@@ -9,8 +9,12 @@
 Run a development task in an isolated copy of your project, watch the work as it happens, review the
 diff line by line, then apply it yourself.
 
-Artel is a DeepSeek Harness plugin. It adds an **Artel** tab to the right sidebar of a chat session.
-The chat session's working directory is the project; Artel never touches it until you press Apply.
+Artel is a DeepSeek Harness plugin. It adds an **Artel** icon button to the chat composer tool row, next
+to **+**. The button covers the current chat with a panel: the session rail of Artel runs on the left,
+and either the new-run form or the live run on the right. The chat session's working directory is the
+project; Artel never touches it until you apply.
+
+![Artel opens over the chat](docs/artel-in-chat/screens/hero.png)
 
 ## Install
 
@@ -22,11 +26,11 @@ Artel is a DSH bundle: it installs with the standard plugin CLI and needs no bui
 dsh plugin --profile <profile> add dsh-artel
 ```
 
-**From the release tarball** — download `dsh-artel-0.1.0.tgz` from the
-[v0.1.0 release](https://github.com/ksolodev/dsh-artel/releases/tag/v0.1.0), then:
+**From the release tarball** — download `dsh-artel.tgz` from the
+[latest release](https://github.com/ksolodev/dsh-artel/releases/latest), then:
 
 ```sh
-dsh plugin --profile <profile> add C:/path/to/dsh-artel-0.1.0.tgz
+dsh plugin --profile <profile> add C:/path/to/dsh-artel.tgz
 ```
 
 **From a checkout** — point the plugin CLI at the directory:
@@ -40,9 +44,9 @@ host reload. In the desktop app you can also use **Settings → Plugins → Inst
 the `.tgz` or the checkout folder.
 
 After installing, restart DeepSeek Harness (or reload the page, which recomposes the client boot
-graph), open a chat session that has a project directory, and click **Artel** in the session header.
-The plugin's page is served over a loopback-only HTTP API, so the plugin and the host must run on the
-same machine.
+graph), open a chat session that has a project directory, and click **Artel** in the composer tool row.
+The plugin's host half talks to the client over a loopback-only HTTP API, so the plugin and the host
+must run on the same machine.
 
 ## How it works
 
@@ -51,12 +55,15 @@ same machine.
    touched.
 2. **Agents** — one agent works in the copy in **Solo**; three agents share one copy and one agent
    tree in **Swarm**, so they can message each other with `send_message`/`list_agents`. The first
-   Swarm turn is planning only: the agents divide the files and announce who owns what.
-3. **Diff** — when every agent goes idle, Artel stops the run and shows every changed file with added
-   and removed line counts and a line-by-line diff.
-4. **Apply** — you tick the files you want and press **Apply**. Before writing, Artel checks each file
-   against the state it had when the run started; a file you edited during the run is reported and
-   never overwritten. **Discard** deletes the copy and changes nothing.
+   Swarm turn is planning only: the agents divide the files and announce who owns what. The agents run
+   unattended: Artel gives them the approval policy `never` and inherits the sandbox mode of the chat
+   session, so a run never stalls on an approval prompt.
+3. **Diff** — when every agent goes idle, Artel stops the run and fills the **Changes** card on the run
+   page: every changed file with added and removed line counts and a line-by-line diff.
+4. **Apply** — you press **Apply** and confirm. It writes every changed file into the project. Before
+   writing, Artel checks each file against the state it had when the run started; a file you edited
+   during the run is reported and the whole apply is refused, so nothing is half-written. **Discard**
+   deletes the copy and changes nothing.
 
 ## Two ways to run a task
 
@@ -79,28 +86,37 @@ Use Swarm when the work splits into pieces that do not meet in the same files.
 
 ## Review and apply
 
-While a run is active, the Artel tab shows the live feed of every agent. You can write to an agent at
-any time without waiting for it to finish; in Swarm you can also address one agent only.
+While a run is active, the run page shows the live feed of every agent: full replies with the avatar,
+name, role and time, grouped tool calls, and separate rows for status, plans, your messages,
+agent-to-agent messages, edit collisions and errors. You can write to the agents at any time without
+waiting for them to finish (Ctrl+Enter sends); address everyone or one specific agent.
+
+![The run page](docs/artel-in-chat/screens/run.png)
 
 When every agent is idle, Artel stops and waits for you:
 
 - **Changes** lists every changed file with added and removed line counts. Open a file to see the diff.
-- Untick the files you do not want.
-- **Apply N files** copies the selected files into your project. A file that you edited during the run
-  is never overwritten: Artel reports it and leaves it alone.
-- **Discard** deletes the copy. Nothing was applied.
+- **Apply** asks for confirmation and writes every changed file into your project. A file that you
+  edited during the run is never overwritten: Artel reports it and refuses the whole apply, so you can
+  discard and run again.
+- **Discard** asks for confirmation, deletes the copy and changes nothing.
 
-The copy lives outside the project, under your DSH home directory, and is removed when the run is
-discarded or when it gets older than `keepCopiesHours`.
+![The Changes card](docs/artel-in-chat/screens/changes.png)
+
+The copy lives outside the project, under your DSH home directory. It is deleted as soon as you apply
+or discard the run, so reviewed copies do not pile up on disk.
 
 ## Open it
 
 1. Open a chat session that has a project directory.
-2. Click the **Artel** button in the session header, or open it from the right sidebar guide.
-3. Pick Solo or Swarm, write the task, press Start.
+2. Click the **Artel** button in the chat composer tool row (next to **+**). While a run in the session
+   is active, the button shows a dot.
+3. Pick Solo or Swarm, write the task, press **Go →** (or Ctrl+Enter). **← Chat** or Esc returns to the
+   chat; the chat itself is not replaced.
 
-Each agent works in the copy as its working directory. The first agent of a Swarm run is an ordinary
-DSH session, so you can open its full conversation from the Agents section of the Artel tab; the other
+The panel belongs to the chat session: the **Sessions** rail lists every run of the session, grouped by
+project, with the active one highlighted, and **+ New Artel** returns to the form. Each agent works in
+the copy as its working directory. The first agent of a Swarm run is an ordinary DSH session, the other
 two are that session's subagents, live in the same agent tree, and are not listed in the sidebar as
 separate chats. Solo agents are ordinary sessions as well, titled `Artel · <agent> — <task>`; archive
 or delete those sessions when you no longer need them.
@@ -110,8 +126,8 @@ or delete those sessions when you no longer need them.
 The plugin was renamed to Artel (the npm name `dsh-forge` belongs to an unrelated placeholder package).
 On its first start the Host moves the previous data root from `<DSH home>/forge/<profile>` to
 `<DSH home>/artel/<profile>`, so existing run records, feeds and copies stay available. The plugin id
-changed with the name, so an already open Forge tab does not restore — open the **Artel** tab once after
-the restart.
+changed with the name: an open Forge page does not restore Artel, so restart DeepSeek Harness and open
+Artel once from the chat composer.
 
 ## Requirements
 
@@ -126,8 +142,8 @@ All values are optional; set them in the bundle's plugin configuration.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `swarmAgentCount` | `3` | Agents per Swarm run (2–8). |
-| `maxRunsPerSession` | `10` | Runs kept per session. Older runs are dropped. |
-| `keepCopiesHours` | `72` | Copies older than this are deleted on startup. `0` disables the sweep. |
+| `maxRunsPerSession` | `10` | Finished runs kept per session; the oldest are dropped with their copies. Runs waiting for you stay. |
+| `keepCopiesHours` | `72` | Retention window for run copies, in hours (0 disables). The current startup sweep removes copies of applied and discarded runs regardless of age. |
 | `diffContext` | `3` | Context lines around each diff hunk (0–12). |
 | `idleGraceMs` | `1200` | How long Artel waits for a possible agent-to-agent message before it calls the run idle (0–10000). |
 | `excludeGlobs` | `[]` | Extra paths never copied, diffed, or applied. |
@@ -138,13 +154,16 @@ All values are optional; set them in the bundle's plugin configuration.
 
 - The project is copied as files, not through Git. Git metadata is not copied, and Artel does not
   require Git to be installed.
-- A copy holds up to 20,000 files, 32 MB per file and 512 MB in total. Larger projects are refused
-  with an error instead of a partial copy.
+- A copy is limited to 512 MB in total and 32 MB per file. A project above the total limit is
+  refused with an error instead of a partial copy; files above the per-file limit are left out of
+  the copy.
 - `node_modules` is linked into the copy instead of copied, so agents can run project checks.
 - Artel watches the copy, not your project: it cannot know about edits you make during the run until
   you apply, and then it refuses to overwrite those files.
 - Only files are applied. Deleted files are deleted on Apply; renames arrive as one deletion and one
   addition.
+- Apply is all-or-nothing for the run: either every changed file is written or, if a file conflicts,
+  none is. The changes card has no per-file selection.
 - Swarm agents live in one agent tree: the first agent is the session at the root of that tree and the
   other two are its subagents. That is what lets them message each other, and it means the root session
   must exist for their messages to be delivered. Closing that session (or restarting the Host) ends the
@@ -161,8 +180,9 @@ All values are optional; set them in the bundle's plugin configuration.
 ## Data and privacy
 
 Run records and feeds are plain JSON and JSONL files under `stateDir`. Agent conversations are
-ordinary DSH sessions and stay in your session store. The plugin serves its page over a loopback-only
-HTTP API; every request is checked for a local socket, a local Host header and a same-origin origin.
+ordinary DSH sessions and stay in your session store. The plugin's host half talks to the client over
+a loopback-only HTTP API; every request is checked for a local socket, a local Host header and a
+same-origin origin.
 
 ## Development
 

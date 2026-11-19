@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import path from 'node:path'
 import { Readable } from 'node:stream'
 import test from 'node:test'
 
@@ -156,17 +157,18 @@ function setup(options = {}) {
   return { webServer, engine, resolved, disposers }
 }
 
-test('registers a health route, a client-report route and a runs prefix', () => {
+test('registers a health route, a project route, a client-report route and a runs prefix', () => {
   const { webServer, disposers } = setup()
-  assert.equal(webServer.routes.length, 3)
+  assert.equal(webServer.routes.length, 4)
   assert.deepEqual(webServer.routes.map((route) => [route.kind, route.path]), [
     ['exact', `${API_PREFIX}/client-report`],
     ['exact', `${API_PREFIX}/health`],
+    ['exact', `${API_PREFIX}/project`],
     ['prefix', `${API_PREFIX}/runs`],
   ])
   assert.equal(typeof disposers[0], 'function')
   disposers[0]()
-  assert.equal(webServer.routes.length, 2)
+  assert.equal(webServer.routes.length, 3)
 })
 
 test('health reports the version and the diagnostics', async () => {
@@ -242,6 +244,50 @@ test('messages, interrupt, changes, diff, apply and discard answer with their pa
   assert.equal(apply.body.run.id, 'fg-1')
   const discard = await call(webServer.routes, `${API_PREFIX}/runs/fg-1/discard`, { method: 'POST' })
   assert.equal(discard.body.run.status, 'discarded')
+})
+
+test('the project route resolves the session directory and its name', async () => {
+  const projectDir = path.join(process.cwd(), 'test', '.tmp', 'session-project')
+  const { webServer } = setup({
+    resolveProjectPath: async (sessionId) => (sessionId === 'session-1' ? projectDir : undefined),
+  })
+  const response = await call(webServer.routes, `${API_PREFIX}/project?sessionId=session-1`)
+  assert.equal(response.status, 200)
+  assert.deepEqual(response.body, { projectPath: path.resolve(projectDir), name: 'session-project' })
+})
+
+test('the project route falls back to the profile working directory', async () => {
+  const fallbackDir = path.join(process.cwd(), 'test', '.tmp', 'profile-project')
+  const { webServer } = setup({
+    resolveProjectPath: async () => undefined,
+    defaultDirectory: () => fallbackDir,
+  })
+  const response = await call(webServer.routes, `${API_PREFIX}/project?sessionId=fresh-session`)
+  assert.equal(response.status, 200)
+  assert.deepEqual(response.body, { projectPath: path.resolve(fallbackDir), name: 'profile-project' })
+})
+
+test('the project route answers with nulls when no project is known yet', async () => {
+  const { webServer } = setup({ resolveProjectPath: async () => undefined })
+  const response = await call(webServer.routes, `${API_PREFIX}/project?sessionId=fresh-session`)
+  assert.equal(response.status, 200)
+  assert.deepEqual(response.body, { projectPath: null, name: null })
+})
+
+test('the project route validates the session and stays fenced', async () => {
+  const { webServer } = setup()
+  const missing = await call(webServer.routes, `${API_PREFIX}/project`)
+  assert.equal(missing.status, 400)
+  assert.equal(missing.body.code, 'artel/bad-request')
+  const empty = await call(webServer.routes, `${API_PREFIX}/project?sessionId=`)
+  assert.equal(empty.status, 400)
+  assert.equal(empty.body.code, 'artel/bad-request')
+  const wrongMethod = await call(webServer.routes, `${API_PREFIX}/project?sessionId=session-1`, { method: 'POST' })
+  assert.equal(wrongMethod.status, 405)
+  assert.equal(wrongMethod.body.code, 'artel/method')
+  const foreign = await call(webServer.routes, `${API_PREFIX}/project?sessionId=session-1`, { remote: '10.0.0.5' })
+  assert.equal(foreign.status, 403)
+  assert.equal(foreign.body.code, 'artel/forbidden')
 })
 
 test('unknown paths and wrong methods are rejected', async () => {

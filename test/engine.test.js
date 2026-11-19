@@ -23,12 +23,16 @@ class FakeDriver {
   disposed = false
   /** Set to false to model a profile without the subagent stack. */
   peers = true
+  /** Set to true to model a host that refuses every prompt. */
+  failPrompt = false
+  /** Optional async hook run before a prompt is accepted or refused. */
+  onPrompt = null
 
   supportsPeers() {
     return this.peers
   }
 
-  async createAgent({ name, mode, projectPath, copyPath, agentId }) {
+  async createAgent({ name, mode, projectPath, copyPath, agentId, parentSessionId }) {
     const handle = {
       id: agentId,
       kind: 'session',
@@ -37,6 +41,7 @@ class FakeDriver {
       mode,
       projectPath,
       copyPath,
+      parentSessionId,
       listeners: new Set(),
     }
     this.created.push(handle)
@@ -72,6 +77,8 @@ class FakeDriver {
 
   async prompt(handle, text) {
     this.prompts.push({ agent: handle.name, kind: handle.kind ?? 'session', text })
+    if (this.onPrompt !== null) await this.onPrompt(handle, text)
+    if (this.failPrompt === true) throw new Error('the host rejected the prompt')
   }
 
   async interrupt(handle) {
@@ -165,11 +172,39 @@ test('solo run: copy, work, review and apply', async () => {
     assert.deepEqual(applied.applied, ['src/app.js'])
     assert.equal(await fs.readFile(path.join(f.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 2\n')
     assert.equal(f.engine.listRuns('s1')[0].status, 'applied')
+    await assert.rejects(() => fs.stat(run.copyPath), 'the isolated copy is deleted once the run is applied')
+    assert.deepEqual(await f.engine.changes(run.id), [], 'a retired copy reports no changes')
 
     const feed = await f.engine.readFeed(run.id, { cursor: 0 })
     assert.ok(feed.events.length >= 3)
     assert.ok(feed.events.some((event) => event.kind === 'assistant'))
     assert.ok(feed.events.some((event) => event.kind === 'tool'))
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('the run phase tracks the latest status line, even on terminal runs', async () => {
+  const f = await fixture('phase')
+  try {
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Change the answer' })
+    assert.equal(f.engine.listRuns('s1')[0].phase, 'Vega is starting on the task.')
+    const handle = f.driver.created[0]
+    await f.driver.emit(handle, { kind: 'assistant', text: 'Looking at the project first.' })
+    assert.equal(f.engine.listRuns('s1')[0].phase, 'Vega is starting on the task.', 'agent text is not a phase')
+
+    await fs.writeFile(path.join(run.copyPath, 'src', 'app.js'), 'export const answer = 2\n')
+    await f.driver.emit(handle, { kind: 'turn-end' })
+    assert.equal(
+      f.engine.listRuns('s1')[0].phase,
+      'Every agent is idle. 1 file changed — review the diff and apply what you like.',
+    )
+
+    await f.engine.apply(run.id)
+    const applied = f.engine.listRuns('s1')[0]
+    assert.equal(applied.status, 'applied')
+    assert.equal(applied.phase, 'Applied 1 file to your project.', 'the terminal run still keeps its last phase')
   } finally {
     await f.engine.dispose()
     await f.cleanup()
@@ -221,6 +256,7 @@ test('swarm run: first turn only divides ownership, then the agents work', async
     assert.ok(planTexts.every((text) => !/does not reach the other agents/.test(text)))
 
     const vega = f.driver.created[0]
+    assert.equal(vega.parentSessionId, 's1', 'the lead is a child of the chat Session')
     const [orion, lyra] = f.driver.members
     await f.driver.emit(vega, { kind: 'assistant', text: 'I will take the source file.\nOWNERSHIP: src/app.js' })
     await f.driver.emit(vega, { kind: 'turn-end' })
@@ -270,6 +306,9 @@ test('swarm contested files: first claimant keeps the area and the feed says so'
     const plan = feed.events.find((event) => event.kind === 'plan')
     assert.match(plan.text, /Contested/)
     assert.match(plan.text, /Orion claimed it, Vega keeps it/)
+    const phase = f.engine.listRuns('s1')[0].phase
+    assert.match(phase, /^Work divided\./)
+    assert.ok(phase.length <= 120, 'the plan phase is truncated to the rail line')
   } finally {
     await f.engine.dispose()
     await f.cleanup()
@@ -345,6 +384,61 @@ test('message wakes idle agents, interrupt stops them, discard removes the copy'
     await assert.rejects(() => fs.stat(run.copyPath), /ENOENT/)
   } finally {
     await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('stopping a run publishes the diff count the review panel will list', async () => {
+  const f = await fixture('interrupt-count')
+  try {
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'change both files' })
+    const handle = f.driver.created[0]
+    assert.equal(handle.parentSessionId, 's1', 'the chat Session is the parent the agent inherits policy from')
+    await fs.writeFile(path.join(run.copyPath, 'src', 'app.js'), 'export const answer = 2\n')
+    await fs.writeFile(path.join(run.copyPath, 'README.md'), '# Demo v2\n')
+
+    const interrupted = await f.engine.interrupt(run.id)
+    assert.equal(interrupted.status, 'interrupted')
+    assert.equal(interrupted.changeCount, 2, 'a stopped run still shows what the user can review')
+    assert.equal((await f.engine.changes(run.id)).length, 2)
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('a failed start keeps the changes it already has', async () => {
+  const f = await fixture('failed-count')
+  try {
+    f.driver.failPrompt = true
+    // The first prompt is delivered only after the copy exists, so the hook can
+    // put a real edit on disk before the host refuses the turn.
+    f.driver.onPrompt = async (handle) => {
+      await fs.writeFile(path.join(handle.copyPath, 'README.md'), '# Demo failed\n')
+    }
+    await assert.rejects(
+      () => f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'fail after the copy' }),
+      (error) => error instanceof ArtelError && error.code === 'artel/agent-failed',
+    )
+    const failed = f.engine.listRuns('s1')[0]
+    assert.equal(failed.status, 'failed')
+    assert.equal(failed.changeCount, 1, 'the terminal summary counts the copy diff')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('dispose counts the diff before interrupting the run', async () => {
+  const f = await fixture('dispose-count')
+  const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'stop the plugin' })
+  try {
+    await fs.writeFile(path.join(run.copyPath, 'src', 'app.js'), 'export const answer = 9\n')
+    await f.engine.dispose()
+    const stopped = f.store.get(run.id)
+    assert.equal(stopped.status, 'interrupted')
+    assert.equal(stopped.changeCount, 1)
+  } finally {
     await f.cleanup()
   }
 })

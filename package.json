@@ -1,7 +1,7 @@
 {
   "name": "dsh-artel",
-  "version": "0.2.0",
-  "description": "Run coding agents in a separate copy of your project: Solo or Swarm, review the changes, apply them yourself.",
+  "version": "0.5.0",
+  "description": "Run coding agents in a separate copy of your project: Solo, Swarm or Conductor — review the changes, apply them yourself.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -28,6 +28,8 @@
     "CHANGELOG.md",
     "lib/client.js",
     "lib/index.js",
+    "lib/conductor.js",
+    "lib/models.js",
     "lib/*.js",
     "cordis.patch.yml",
     "docs/*.md",
@@ -46,6 +48,7 @@
     "coding-agent",
     "multi-agent",
     "swarm",
+    "conductor",
     "code-review",
     "ai-agents"
   ],

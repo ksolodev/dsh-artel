@@ -70,6 +70,17 @@ function fakeEngine() {
       calls.push({ method: 'interrupt', runId })
       return summary({ id: runId, status: 'interrupted' })
     },
+    async models() {
+      calls.push({ method: 'models' })
+      return {
+        providers: [{ id: 'test', name: 'Test', models: [{ id: 'fast', name: 'Fast', efforts: [{ id: 'low' }] }] }],
+        default: { provider: 'test', model: 'fast', reasoningEffort: 'low' },
+      }
+    },
+    async setAgentModel(runId, agentId, model) {
+      calls.push({ method: 'setAgentModel', runId, agentId, model })
+      return summary({ id: runId, agents: [{ ...summary().agents[0], model }] })
+    },
     async changes(runId) {
       calls.push({ method: 'changes', runId })
       return [{ path: 'index.html', status: 'modified', added: 2, removed: 0, hunks: [] }]
@@ -157,18 +168,61 @@ function setup(options = {}) {
   return { webServer, engine, resolved, disposers }
 }
 
-test('registers a health route, a project route, a client-report route and a runs prefix', () => {
+test('registers a health route, a model catalog route, a project route, a client-report route and a runs prefix', () => {
   const { webServer, disposers } = setup()
-  assert.equal(webServer.routes.length, 4)
+  assert.equal(webServer.routes.length, 5)
   assert.deepEqual(webServer.routes.map((route) => [route.kind, route.path]), [
     ['exact', `${API_PREFIX}/client-report`],
     ['exact', `${API_PREFIX}/health`],
+    ['exact', `${API_PREFIX}/models`],
     ['exact', `${API_PREFIX}/project`],
     ['prefix', `${API_PREFIX}/runs`],
   ])
   assert.equal(typeof disposers[0], 'function')
   disposers[0]()
-  assert.equal(webServer.routes.length, 3)
+  assert.equal(webServer.routes.length, 4)
+})
+
+test('the model catalog route answers without a session', async () => {
+  const { webServer, engine } = setup()
+  const response = await call(webServer.routes, `${API_PREFIX}/models`)
+  assert.equal(response.status, 200)
+  assert.equal(response.body.providers[0].id, 'test')
+  assert.deepEqual(response.body.default, { provider: 'test', model: 'fast', reasoningEffort: 'low' })
+  assert.deepEqual(engine.calls.at(-1), { method: 'models' })
+  const wrongMethod = await call(webServer.routes, `${API_PREFIX}/models`, { method: 'POST' })
+  assert.equal(wrongMethod.status, 405)
+})
+
+test('one agent can be rerouted through the run route', async () => {
+  const { webServer, engine } = setup()
+  const response = await call(webServer.routes, `${API_PREFIX}/runs/fg-1/agents/fg-1-a1/model`, {
+    method: 'POST',
+    body: { model: { provider: 'test', model: 'fast', reasoningEffort: 'low' } },
+  })
+  assert.equal(response.status, 200)
+  assert.equal(response.body.run.agents[0].model.model, 'fast')
+  assert.deepEqual(engine.calls.at(-1), {
+    method: 'setAgentModel',
+    runId: 'fg-1',
+    agentId: 'fg-1-a1',
+    model: { provider: 'test', model: 'fast', reasoningEffort: 'low' },
+  })
+
+  const bare = await call(webServer.routes, `${API_PREFIX}/runs/fg-1/agents/fg-1-a1/model`, {
+    method: 'POST',
+    body: { provider: 'test', model: 'fast' },
+  })
+  assert.equal(bare.status, 200, 'a bare selection is accepted too')
+  assert.deepEqual(engine.calls.at(-1).model, { provider: 'test', model: 'fast' })
+})
+
+test('an unknown sub-route of a run is a 404', async () => {
+  const { webServer } = setup()
+  const response = await call(webServer.routes, `${API_PREFIX}/runs/fg-1/agents/fg-1-a1/other`, { method: 'POST' })
+  assert.equal(response.status, 404)
+  const tooShort = await call(webServer.routes, `${API_PREFIX}/runs/fg-1/agents/fg-1-a1`, { method: 'POST' })
+  assert.equal(tooShort.status, 404)
 })
 
 test('health reports the version and the diagnostics', async () => {
@@ -222,6 +276,7 @@ test('starting a run uses the body project path or resolves it', async () => {
     projectPath: 'C:\\work\\app',
     mode: 'solo',
     task: 'Add a screen',
+    model: undefined,
   })
 })
 

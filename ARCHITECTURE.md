@@ -1,7 +1,7 @@
 # dsh-artel — architecture (working plan)
 
-Status: v0.1 shipped; v0.2 (in-chat artel) is in progress on branch `feat/artel-in-chat`. This is the
-design and implementation plan, kept for contributors. Where it
+Status: v0.1 shipped; the current tree is v0.5 — in-chat artel since v0.2, Conductor mode added on top
+of Swarm. This is the design and implementation plan, kept for contributors. Where it
 describes an earlier iteration and differs from the shipped code — for example, run copies are plain
 directory copies (not git worktrees) and run state lives under `<DSH_HOME>/artel/<profile>` — the
 README and the source are authoritative. The v0.2 UX/architecture change is specified in
@@ -13,6 +13,7 @@ A DSH bundle plugin (`dsh-artel`) that turns "develop this in my project" into a
 
 - **Solo** — 1 agent, its own copy of the project, works end to end. Live feed, user can message it mid-run, only the user's Apply button changes the real project.
 - **Swarm** — 3 agents, ONE shared copy and ONE agent tree (the first agent is the tree root, the other two are its continuable subagents), so they can really message each other with the standard team tools. First turn is planning/ownership only (no edits), then parallel work in disjoint file areas. One combined diff, one Apply.
+- **Conductor** — 1 conductor + `swarmAgentCount` workers (three by default), ONE shared copy and ONE agent tree like Swarm: the conductor is the root Session, the workers are its subagents. The first turn is planning only — the workers propose the shares and the conductor approves or reassigns them, its word is final. While the workers edit in parallel, a worker's question reaches the conductor and is answered without the user, and a failed worker's share is moved to a live worker. When every worker is idle the conductor reviews the whole copy (changed files + the project's checks) against the task and answers `VERDICT: accept` or `VERDICT: rework` with remarks, at most two rework rounds; accepted work still waits for the user's Apply.
 
 The real project is never written by an agent: agents run with cwd = copy. Apply is a user action, in our UI.
 
@@ -27,7 +28,7 @@ Artel lives inside the chat, not in the right sidebar:
   entry as the launcher (the composer dock slots do not exist in the hero/blank phase, so the
   launcher entry is the only mount point present everywhere). It works on a blank/new session and on
   an active one; the standard composer stays mounted underneath and returns instantly on close
-  («← Чат»).
+  («Чат»).
 - Why not a `conversation.view`: `DefaultConversationViews` renders nothing for a blank session
   (`session.blank` → `null`), so a hero/launch screen could never appear in a fresh chat; view
   activation would also need an extra, not-yet-verified API (`uiConversation.binding(id).activate`).
@@ -36,18 +37,18 @@ Artel lives inside the chat, not in the right sidebar:
   guide entry and the conversation-header action are removed in v0.2.
 
 Surface layout: a left **rail** of this session's artel runs (status dot, title, meta
-`Solo · 3/6 · phase`, «+ Новая артель») and a workspace — hero for a new run, run page for an
+`Solo · 3/6 · phase`, «Новая сессия») and a workspace — hero for a new run, run page for an
 existing one. "The project" is still the current session's working directory (fallback: the
 plugin's default working directory), resolved by the host (`GET /project`), no project picker.
 
 ## UX (v0.2)
 
 ### Empty state — hero for a new run
-Title «Новая артель в <проект>», one-line explanation, mode picker (Solo / Swarm with 1 line each),
-task textarea («Опишите задачу, как коллеге»), primary button «Поехали →». The rail below shows
+Title «Новая задача», task textarea («Опишите задачу для агентов…»), mode picker (Solo / Swarm / Conductor with 1 line each),
+primary button «Поехали →», and the isolated-copy note naming the project. The rail below shows
 previous runs of this session.
 
-### Run page (both modes)
+### Run page (all modes)
 - Header: mode tag, status (`preparing`, `planning`, `running`, `waiting for you`, `done`, `failed`,
   interrupted, applied, discarded), phase line (`phase` from the run summary), project chip, Stop.
 - **Feed**: append-only, rendered as real chat messages — each agent reply is a full message with
@@ -60,7 +61,7 @@ previous runs of this session.
   Empty state "no changes yet" (also the swarm phase-1 state).
 - **Actions**: `Apply changes` (primary, confirmation, all or selected files), `Discard run`
   (destructive, confirm). Apply only enabled when there are changes and the run is not running.
-- **Agents** (swarm): rows with name, claimed files, state; collisions flagged.
+- **Agents** (swarm and conductor): rows with name, claimed files, state; collisions flagged.
 
 ### Swarm turn-1 protocol (product requirement: "правок пока нет")
 1. Host creates one copy, creates the team (see **Agents** below), prompts all three with: project description, the task, and the ownership protocol — *"This is turn 1. Do not create, edit or delete any file. You can message the other agents; end your turn with one OWNERSHIP line."*
@@ -73,7 +74,7 @@ previous runs of this session.
 Persisted at `<DSH_HOME>/artel/runs.json` (atomic write, written on every transition; not the source of truth for conversation content — only run bookkeeping, which is allowed by the practices rules since we cannot append custom session events).
 
 ```ts
-type Mode = 'solo' | 'swarm'
+type Mode = 'solo' | 'swarm' | 'conductor'
 type RunStatus = 'preparing' | 'planning' | 'running' | 'waiting' | 'finished' | 'failed' | 'interrupted' | 'applied' | 'discarded'
 
 interface RunRecord {
@@ -95,8 +96,8 @@ interface RunRecord {
 interface AgentRecord {
   sessionId: string
   name: string
-  role: 'solo' | 'swarm'
-  kind: 'session' | 'member' // ordinary Session or subagent of the swarm lead
+  role: 'solo' | 'swarm' | 'conductor' | 'worker' // 'conductor'/'worker' in a Conductor run
+  kind: 'session' | 'member' // ordinary Session or subagent of the lead/conductor
   claimed: string[]
   status: 'starting' | 'planning' | 'working' | 'idle' | 'failed'
 }
@@ -113,6 +114,8 @@ interface FeedEvent {
 ```
 
 Feed events are kept in memory + appended to `<DSH_HOME>/artel/runs/<id>.jsonl` (capped, rotated at ~2 MB) so a reload/GUI restart still shows history. Live stream can be re-read by cursor. `RunSummary` (what the client gets) adds `phase`, `changeCount`, `finishedAt`, `appliedAt`, `feedSeq`/`feedFloor`; the full `RunRecord` stays host-side.
+
+A Conductor run also keeps an in-memory `runtime.stage` (`planning`, `shares`, `working`, `review`, `rework`, `handover`, `accepted`). It is host-side only and never persisted; the persisted status keeps its existing meaning — `planning` during `planning`/`shares`, `running` during `working`/`review`/`rework`/`handover`, `waiting` after an accept. There are no new statuses and no new feed kinds: `plan` carries the share, rework and accept cards, `status` the stage lines, `peer` the agent messages and `error` the failures.
 
 ## Host ⇄ client protocol
 
@@ -147,7 +150,11 @@ v0.2 additions to the summary: `phase` (last `status`/`plan` line, ≤120 chars)
 
 ## Agents
 
-Solo and the Swarm lead are ordinary Sessions created through the plugin-facing session controller with `cwd = copyPath`, so each gets normal DSH tools, sandbox and approvals. Messages to them are queued prompts; interrupt is `cancel`. Feed = durable `session/event` records filtered by session id (`assistant/message`, `tool/call`, `tool/result`, `turn/start`, `turn/end`, and `user/message` whose source is `{kind:'agent-message'}` → `peer`).
+Solo agents, the Swarm lead and the Conductor are ordinary Sessions created through the plugin-facing
+session controller with `cwd = copyPath`, so each gets normal DSH tools, sandbox and approvals. Messages
+to them are queued prompts; interrupt is `cancel`. Feed = durable `session/event` records filtered by
+session id (`assistant/message`, `tool/call`, `tool/result`, `turn/start`, `turn/end`, and
+`user/message` whose source is `{kind:'agent-message'}` → `peer`).
 
 Swarm members are continuable subagents of the lead Session (`ctx.subagents.startActivation({provider:'spawn', parent: leadAgent, delivery:'caller', cwd: copyPath})`), so the whole team lives in ONE agent tree: `send_message`/`list_agents` reach every member, and a message one agent writes arrives in the other's conversation as a real turn. Two transport details follow from the host's fencing rules:
 
@@ -155,6 +162,50 @@ Swarm members are continuable subagents of the lead Session (`ctx.subagents.star
 - A local child settles and disposes its activation after each turn and is cold-resumed by the next delivery. During that closing window `subagents.prompt` fails with `subagent/delivery-unavailable`; the driver retries the same prompt with backoff (8 attempts, 40ms→1200ms). This requires the lead Session to stay live for the lifetime of the run.
 
 `delivery:'caller'` keeps member completions out of the lead's model context (the engine learns turn ends from Session events instead). The run page offers "open conversation" for solo agents and the lead only; members have no separate chat.
+
+Conductor runs use the same machinery with a lead that stays for the whole run: the conductor is the ordinary Session (`driver.createAgent`, address `conductor`) and the workers are its subagent children (`driver.spawnMember`, one address per worker), so the team lives in ONE agent tree and `send_message`/`list_agents` work across it. Before a Conductor run creates its copy, the driver checks `supportsPeers()`; a profile without the subagent stack is refused with `artel/peers-required` — unlike Swarm, Conductor has no independent-session fallback.
+
+### Provider, model and reasoning effort
+
+The picker catalog is built host-side from `ctx.llm`: `listProviders()` → `listModels(provider)` → `resolveModelInfo({provider, model})`, seeded with `ctx.agentDefaultModel.currentSelection()`. `lib/models.js` is pure (build/normalize/validate/describe), so the shape is unit-tested without DSH.
+
+The route is applied per agent through `agent.model.select({provider, model, reasoningEffort})` — the live Agent is reached with `ctx.agents.get(sessionId)` (the controller registry, not the handle). We deliberately do NOT use the Remote `sessionController.selectModel`: it also rewrites the user's profile default as a side effect, and a reroute of one Artel agent must not change what the next chat starts on. Selection is validated against the catalog first (`artel/model-unavailable`); a route the Host then refuses degrades to a feed warning and the agent keeps the profile default, so a mistyped route never kills a run.
+
+The spawn-based swarm cannot take a model at creation time (`subagents.startActivation` has no model/agentOptions fields), so a member is routed right after its child Session appears and is reachable through `ctx.agents.get(childId)` (12 attempts × 40 ms). Its first planning step may therefore run on the default route.
+
+## Conductor
+
+Mode `conductor` reuses Swarm's one-copy, one-tree model and puts a lead on top. The team is 1 conductor
+plus `swarmAgentCount` workers (2–8, three by default): `run.agents[0]` is the conductor with role
+`conductor`, the rest are workers with role `worker`. A Conductor run therefore starts
+`1 + swarmAgentCount` agents — one more than the configured Swarm count — and the conductor counts as
+the root of the agent tree, not as a worker.
+
+The host keeps a `runtime.stage` for the run (host-side only, never persisted — see **Data model**):
+
+| stage | run status | what the host does |
+|---|---|---|
+| `planning` | `planning` | Starts the conductor and the workers; workers answer with an `OWNERSHIP:` line, the conductor ends its turn with a `SHARES:` line. |
+| `shares` | `planning` | Parses the worker proposals and prompts the conductor to decide; `parseShares` turns its `SHARES:` answer into the final worker→files map (approving the proposal or reassigning it). A missing decision is retried once. |
+| `working` | `running` | Sends each worker its final share, tracks `turn/end`, and watches for failures: a stopped worker's share is moved by the conductor to the least loaded live worker; the move is a `plan` card. |
+| `review` | `running` | Every worker idle → prompts the conductor to read the changed files, run the project's checks and compare the copy with the task. A missing verdict is retried once. |
+| `rework` | `running` | `VERDICT: rework` with an optional `REWORK:` list sends the named shares back while the others are accepted for now. Capped at `MAX_REWORK_ROUNDS = 2`; a third request is coerced to an accept with remarks. |
+| `handover` | `running` | An in-flight share move: the conductor names the receiver, and a missing answer makes Artel pick the least loaded worker itself. |
+| `accepted` | `waiting` | `VERDICT: accept` → the run goes to `waiting for you` with the combined diff; the user still has to press Apply. |
+
+- **Markers**: workers close their planning turn with `OWNERSHIP:`, the conductor uses `SHARES:`,
+  `VERDICT:` and `REWORK:`. The parsers, the failure classifier, the change digest and the handover
+  helpers live in `lib/conductor.js` as pure functions (`parseShares`, `parseVerdict`,
+  `failureKindOf`, `changeDigest`, `leastLoadedName`, `capText`) and are unit-tested without DSH.
+- **The conductor never edits and never applies.** Its prompts forbid writes in the copy, and the host
+  applies the mechanical consequences (share move, rework round). The review is a review of the whole
+  copy: changed files plus the project's checks, not a per-file diff.
+- While the conductor decides — stages `shares`, `review`, `handover` — `message()` is refused with
+  `artel/reviewing`; `interrupt()` in those stages resets the stage to `working` and clears the failure.
+- **No new surface**: no new feed kinds, routes or statuses. The existing `plan` kind carries the
+  proposed shares, the handed-out shares, the rework round and the accept card; `status` carries the
+  stage lines; `peer` carries the agent messages; `error` carries worker and conductor failures. Copy,
+  diff, apply/discard and model routing are unchanged from Swarm.
 
 ## Package layout (no build step)
 
@@ -164,7 +215,7 @@ dsh-artel/
   cordis.patch.yml        # - insert: [{ id: dsh-artel, name: dsh-artel }]
   lib/index.js            # Host half, plain ESM, export const inject, Config, apply(ctx, config)
   lib/client.js           # window.__ModuleLoader__.load({ id:'dsh-artel', factory(require){...} })
-  lib/*.js                # host modules: runs.js copy.js diff.js agents.js routes.js
+  lib/*.js                # host modules: run-store.js copy.js diff.js models.js conductor.js routes.js host-driver.js engine.js
   locale/{en,ru,zh}.json  # meta.title/meta.description + strings
   icon.svg
   README.md, LICENSE
@@ -176,7 +227,7 @@ Server code is plain ESM JavaScript (no TS) so nothing has to be compiled; the c
 
 ## Config (schemastery)
 
-`copyRoot` (default `<DSH_HOME>/artel/copies`), `swarmAgentCount` (3, 2..8), `maxRunsPerSession` (10), `keepCopiesHours` (72), `diffContext` (3), `idleGraceMs` (1200, how long a potential peer message may still be in flight before the run is called idle), `excludeGlobs` for non-git copies. No behavior-changing defaults that surprise.
+`copyRoot` (default `<DSH_HOME>/artel/copies`), `swarmAgentCount` (3, 2..8; a Conductor run starts one conductor on top, so `1 + this` agents), `maxRunsPerSession` (10), `keepCopiesHours` (72), `diffContext` (3), `idleGraceMs` (1200, how long a potential peer message may still be in flight before the run is called idle), `excludeGlobs` for non-git copies. No behavior-changing defaults that surprise.
 
 ## Milestones
 
@@ -185,3 +236,4 @@ Server code is plain ESM JavaScript (no TS) so nothing has to be compiled; the c
 3. **M3 Review**: changes list + per-file diff + apply (with conflict guard) + discard + cleanup.
 4. **M4 Swarm**: 3 agents, planning turn, ownership map, go-ahead, combined diff, collision notices.
 5. **M5 Ship**: ru/zh strings, README + guide doc, unit tests, restart safety, `dshmarket` packaging notes, install + end-to-end verification in the running GUI.
+6. **M6 Conductor**: one conductor + N workers, share proposal/approval, peer Q&A through the conductor, failure handover, whole-copy review with checks, two-round rework cap, accepted work waiting for the user's Apply.

@@ -46,6 +46,7 @@ That produces `dist/<name>-<version>.tgz` containing:
 package.json  cordis.patch.yml  icon.svg  LICENSE  README.md
 lib/index.js  lib/client.js  lib/diff.js  lib/paths.js  lib/ownership.js
 lib/copy.js   lib/prompts.js  lib/run-store.js  lib/engine.js  lib/host-driver.js  lib/routes.js
+lib/models.js  lib/conductor.js
 locale/en.json  locale/ru.json  locale/zh.json
 docs/guide.md  docs/guide.ru.md  docs/guide.zh.md  docs/publishing.md
 ```
@@ -132,12 +133,16 @@ the client boot graph).
       and `import()` of `lib/index.js` exposes `apply`.
 - [ ] Install that tarball into a scratch profile, restart the host, open a chat and click **Artel**
       in the composer tool row (next to **+**): the panel opens over the chat, the **Sessions** rail
-      lists the previous runs and **+ New Artel** shows the new-run form.
+      lists the previous runs and **New session** shows the new-run form.
 - [ ] Solo run on a scratch project: full agent replies stream into the feed, the changes card lists
       the files, the per-file diff renders, **Apply** writes exactly those files and deletes the copy.
 - [ ] Swarm run on a scratch project: the plan turn lists owners, agents that message each other show
       up in the feed as `Agent <name> sent a message:`, all agents edit their own files, and the
       combined diff applies in one go.
+- [ ] Conductor run on a scratch project: the plan card proposes the shares, the conductor's decision
+      hands them out (no edits before that), the workers edit in parallel, and the review ends with a
+      verdict — try one rework round and then an accept; **Apply** is still the only thing that writes
+      the project.
 - [ ] Apply conflict check: edit a file in the project while a run waits, then Apply — Artel rejects
       the apply and reports the conflicting file, leaving your edit alone.
 - [ ] UI language switch (en / ru / zh) and the plugin card title/description/icon in the plugin
@@ -145,5 +150,6 @@ the client boot graph).
 - [ ] `npm publish` (or the web-OTP driver), GitHub release with both tarball assets, and the
       awesome-dsh-plugin entry updated (`tarball:` + `description`).
 - [ ] `README.md` and `docs/guide*.md` describe the current behavior, including the limitations
-      (Swarm messaging needs the lead session to stay live, interrupted runs after a restart, and the
-      fallback for profiles without the subagent stack).
+      (Swarm messaging needs the lead session to stay live, Conductor needs the subagent stack with no
+      fallback and reviews at most twice, interrupted runs after a restart, and the fallback for
+      profiles without the subagent stack).

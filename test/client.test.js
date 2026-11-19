@@ -257,6 +257,20 @@ function findButton(tree, label) {
   return findAll(tree, (node) => node.type === 'button' && textOf(node).includes(label))[0]
 }
 
+function pickerTriggers(tree) {
+  return findAll(tree, (node) => node.type === 'button'
+    && typeof node.props?.className === 'string'
+    && node.props.className.split(/\s+/).includes('dsh-artel-select'))
+}
+
+function pickOption(tree, value) {
+  const menu = findByClass(tree, 'dsh-artel-menu')
+  assert.ok(menu !== undefined, 'the picker menu is open')
+  const option = findAll(menu, (node) => node.props?.role === 'option' && node.props['data-value'] === value)[0]
+  assert.ok(option !== undefined, 'option ' + value + ' is in the menu')
+  option.props.onClick()
+}
+
 /* ------------------------------------------------------------------ realm */
 
 const DEFAULT_PROJECT = { projectPath: 'C:\\work\\artel-toy', name: 'artel-toy' }
@@ -443,6 +457,33 @@ function createRealm(options = {}) {
       if (result !== undefined) return result
     }
     if (pathname === '/api/dsh-artel/project') return json(scenario.project ?? DEFAULT_PROJECT)
+    if (pathname === '/api/dsh-artel/models') {
+      return json(scenario.models ?? {
+        providers: [{
+          id: 'test',
+          name: 'Test',
+          models: [
+            { id: 'fast', name: 'Fast', efforts: [{ id: 'low', label: 'Low' }, { id: 'high', label: 'High' }], defaultEffort: 'low' },
+            { id: 'slow', name: 'Slow', efforts: [] },
+          ],
+        }],
+        default: { provider: 'test', model: 'fast', reasoningEffort: 'low' },
+      })
+    }
+    const modelMatch = /^\/api\/dsh-artel\/runs\/([^/]+)\/agents\/([^/]+)\/model$/.exec(pathname)
+    if (modelMatch !== null && method === 'POST') {
+      const runId = decodeURIComponent(modelMatch[1])
+      const agentId = decodeURIComponent(modelMatch[2])
+      const selection = body.model
+      const runs = scenario.runs ?? []
+      const run = runs.find((entry) => entry.id === runId) ?? DEFAULT_RUN
+      const patched = {
+        ...run,
+        agents: run.agents.map((agent) => agent.id === agentId ? { ...agent, model: selection } : agent),
+      }
+      scenario.runs = runs.map((entry) => entry.id === runId ? patched : entry)
+      return json({ run: patched })
+    }
     if (pathname === '/api/dsh-artel/runs' && method === 'GET') return json({ runs: scenario.runs ?? [] })
     if (pathname === '/api/dsh-artel/runs' && method === 'POST') {
       const run = {
@@ -693,6 +734,11 @@ test('plugin registers one conversation.input.left entry and diagnostics', async
   assert.equal(state.realm.styleElements[0].attributes['data-plugin'], 'dsh-artel')
   assert.match(state.realm.styleElements[0].textContent, /\.dsh-artel-surface/)
   assert.match(state.realm.styleElements[0].textContent, /\.dsh-artel-launcher/)
+  assert.doesNotMatch(state.realm.styleElements[0].textContent, /dsh-artel-model-pick::after/, 'the chip paints no second chevron')
+  assert.match(state.realm.styleElements[0].textContent, /dsh-artel-hero__textarea:focus-visible/, 'the card owns the only focus ring')
+  assert.match(state.realm.styleElements[0].textContent, /dsh-artel-btn--primary\[disabled\]:hover/, 'a disabled primary keeps its gradient on hover')
+  assert.match(state.realm.styleElements[0].textContent, /\.dsh-artel-menu \{/, 'the pickers paint their own menu')
+  assert.match(state.realm.styleElements[0].textContent, /backdrop-filter: blur\(28px\)/, 'the menu is a translucent glass panel')
 
   assert.ok(state.dictionaries['dsh-artel'] !== undefined)
   const ru = state.dictionaries['dsh-artel'].ru
@@ -835,7 +881,7 @@ test('store loads runs, persists the active run and starts new ones', async () =
   assert.equal(after.feed.length, 1)
   assert.equal(after.feed[0].text, 'Пишу код.')
 
-  /* «+ Новая артель» must keep the hero even after a background refresh:
+  /* The new-session action must keep the hero even after a background refresh:
    * the refresh used to restore the stored run and steal the hero. */
   store.selectRun(null)
   assert.equal(store.getSnapshot().activeRunId, null)
@@ -876,9 +922,15 @@ test('launcher opens the overlay, hero shows the project and starts a run', asyn
   assert.equal(findByClass(opened, 'dsh-artel-run'), undefined, 'hero is shown before a run is selected')
 
   const heroText = textOf(findByClass(opened, 'dsh-artel-hero'))
-  assert.match(heroText, /artel-toy/)
-  assert.match(heroText, /Новая артель/)
+  assert.match(heroText, /artel-toy/, 'the heading area names the project the run will touch')
+  assert.match(heroText, /Новая задача/, 'the form title is plain language')
+  assert.doesNotMatch(heroText, /артель/i, 'no artel jargon leaks into the new-run page')
   assert.match(heroText, /Swarm/)
+  assert.equal(findAll(opened, (node) => node.props?.className === 'dsh-artel-hero__eyebrow').length, 0, 'no project badge above the title')
+  assert.equal(findByClass(opened, 'dsh-artel-rail__new'), undefined, 'the create button is not duplicated on the form')
+  assert.equal(findByClass(opened, 'dsh-artel-rail__footer'), undefined, 'no zero counters before the first run')
+  assert.equal(findByClass(opened, 'dsh-artel-refresh'), undefined, 'no refresh control on a form with nothing to refresh')
+  assert.match(heroText, /Один агент, одна копия/, 'the mode toggle explains itself')
 
   const textarea = findAll(opened, (node) => node.type === 'textarea' && node.props.className === 'dsh-artel-hero__textarea')[0]
   assert.ok(textarea !== undefined)
@@ -915,6 +967,107 @@ test('launcher opens the overlay, hero shows the project and starts a run', asyn
   debug.getStore('sess-1').dispose()
 })
 
+test('the hero picks a provider model and effort, and one agent can be rerouted', async () => {
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [],
+      nextRunId: 'run-live',
+      newRunFeed: [{ seq: 1, at: '2026-01-01T11:00:00Z', kind: 'assistant', agent: 'Nova', text: 'Готово.' }],
+    },
+  })
+  const tree = await renderLauncher(state)
+  findByClass(tree, 'dsh-artel-launcher').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  await state.realm.renderer.flush()
+
+  assert.ok(state.realm.calls.some((call) => call.pathname === '/api/dsh-artel/models' && call.method === 'GET'), 'the catalog is loaded for the hero')
+
+  let hero = findByClass(state.realm.renderer.tree(), 'dsh-artel-hero__models')
+  assert.ok(hero !== undefined, 'the hero shows the profile catalog')
+  assert.equal(findAll(hero, (node) => node.type === 'select').length, 0, 'no native select survives in the form')
+  let triggers = pickerTriggers(hero)
+  assert.equal(triggers.length, 2, 'the model and its effort are two pickers')
+  assert.equal(triggers[0].props['data-value'], 'test/fast', 'the profile default model is preselected')
+  assert.equal(triggers[1].props['data-value'], 'low', 'the model default effort is preselected')
+  assert.equal(findByClass(hero, 'dsh-artel-menu'), undefined, 'the menu is closed until the picker opens')
+
+  triggers[0].props.onClick()
+  await state.realm.renderer.flush()
+  hero = findByClass(state.realm.renderer.tree(), 'dsh-artel-hero__models')
+  const openedMenu = findByClass(hero, 'dsh-artel-menu')
+  assert.ok(openedMenu !== undefined, 'the picker opens its own menu, not the native popup')
+  triggers = pickerTriggers(hero)
+  assert.equal(triggers[0].props['aria-owns'], openedMenu.props.id, 'the combobox owns its listbox for assistive tech')
+  assert.equal(triggers[0].props['data-open'], 'true', 'the open trigger exposes its state to CSS')
+  pickOption(hero, 'test/slow')
+  await state.realm.renderer.flush()
+  hero = findByClass(state.realm.renderer.tree(), 'dsh-artel-hero__models')
+  triggers = pickerTriggers(hero)
+  assert.equal(findByClass(hero, 'dsh-artel-menu'), undefined, 'choosing an option closes the menu')
+  assert.equal(triggers[0].props['data-open'], 'false', 'the closed trigger clears its open state')
+  assert.equal(triggers.length, 1, 'a model without reasoning efforts hides the effort picker')
+  assert.equal(triggers[0].props['data-value'], 'test/slow')
+
+  triggers[0].props.onClick()
+  await state.realm.renderer.flush()
+  hero = findByClass(state.realm.renderer.tree(), 'dsh-artel-hero__models')
+  pickOption(hero, 'test/fast')
+  await state.realm.renderer.flush()
+  hero = findByClass(state.realm.renderer.tree(), 'dsh-artel-hero__models')
+  triggers = pickerTriggers(hero)
+  assert.equal(triggers.length, 2, 'the effort picker returns with the model')
+  triggers[1].props.onClick()
+  await state.realm.renderer.flush()
+  hero = findByClass(state.realm.renderer.tree(), 'dsh-artel-hero__models')
+  pickerTriggers(hero)[1].props.onKeyDown({ key: 'Escape', preventDefault() {} })
+  await state.realm.renderer.flush()
+  hero = findByClass(state.realm.renderer.tree(), 'dsh-artel-hero__models')
+  assert.equal(findByClass(hero, 'dsh-artel-menu'), undefined, 'Escape closes the menu')
+  pickerTriggers(hero)[1].props.onClick()
+  await state.realm.renderer.flush()
+  hero = findByClass(state.realm.renderer.tree(), 'dsh-artel-hero__models')
+  pickOption(hero, 'high')
+  await state.realm.renderer.flush()
+
+  const textarea = findAll(state.realm.renderer.tree(), (node) => node.type === 'textarea' && node.props.className === 'dsh-artel-hero__textarea')[0]
+  assert.ok(textarea !== undefined, 'the hero still offers a task box')
+  textarea.props.onChange({ target: { value: 'Сделай кнопку' } })
+  await state.realm.renderer.flush()
+  findButton(state.realm.renderer.tree(), 'Поехали →').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  await state.realm.renderer.flush()
+
+  const started = state.realm.calls.find((call) => call.pathname === '/api/dsh-artel/runs' && call.method === 'POST')
+  assert.ok(started !== undefined, 'the run was started')
+  assert.deepEqual(started.body.model, { provider: 'test', model: 'fast', reasoningEffort: 'high' }, 'the hero route travels with the run')
+
+  const bar = findByClass(state.realm.renderer.tree(), 'dsh-artel-models')
+  assert.ok(bar !== undefined, 'every live agent gets a model row')
+  const rows = findAll(bar, (node) => node.props?.className === 'dsh-artel-models__row')
+  assert.equal(rows.length, DEFAULT_RUN.agents.length)
+  const agentTriggers = pickerTriggers(rows[1])
+  assert.equal(agentTriggers[0].props['data-value'], '', 'an agent without a route shows the profile default')
+  agentTriggers[0].props.onClick()
+  await state.realm.renderer.flush()
+  pickOption(state.realm.renderer.tree(), 'test/slow')
+  await state.realm.settle()
+  await state.realm.settle()
+  await state.realm.renderer.flush()
+
+  const rerouted = state.realm.calls.find((call) => call.method === 'POST' && call.pathname === '/api/dsh-artel/runs/run-live/agents/a2/model')
+  assert.ok(rerouted !== undefined, 'the agent reroute reached the Host')
+  assert.deepEqual(rerouted.body, { model: { provider: 'test', model: 'slow' } })
+
+  const rerendered = findAll(findByClass(state.realm.renderer.tree(), 'dsh-artel-models'), (node) => node.props?.className === 'dsh-artel-models__row')
+  assert.equal(pickerTriggers(rerendered[1])[0].props['data-value'], 'test/slow', 'the bar shows the new route')
+  assert.equal(pickerTriggers(rerendered[0])[0].props['data-value'], '', 'the other agents keep their route')
+
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
 test('closing the surface from its header returns to the chat', async () => {
   const state = setup({ scenario: { project: DEFAULT_PROJECT, runs: [] } })
   const tree = await renderLauncher(state)
@@ -925,6 +1078,8 @@ test('closing the surface from its header returns to the chat', async () => {
 
   const back = findByClass(opened, 'dsh-artel-surface__back')
   assert.ok(back !== undefined)
+  assert.equal(back.props.title, 'Вернуться в чат', 'the back control tooltip matches its label')
+  assert.equal(findAll(back, (node) => node.type === 'svg').length, 1, 'the header back button draws one chevron')
   back.props.onClick()
   await state.realm.renderer.flush()
   opened = state.realm.renderer.tree()
@@ -1159,4 +1314,154 @@ test('review run renders the changes card, expands a diff and applies', async ()
   assert.match(textOf(findByClass(opened, 'dsh-artel-changes')), /Применено/)
   assert.ok(state.realm.calls.some((call) => call.pathname === '/api/dsh-artel/runs/run-review/apply' && call.method === 'POST'))
   state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+/* ------------------------------------------------------- conductor (0.5.0) */
+
+test('all three dictionaries carry the Conductor mode and role labels', () => {
+  const state = setup()
+  const dictionaries = state.dictionaries['dsh-artel']
+  assert.ok(dictionaries !== undefined)
+  const expected = {
+    en: {
+      'mode.conductor': 'Conductor',
+      'mode.conductor.hint': 'Three agents divide the files; the conductor accepts the work',
+      'role.conductor': 'conductor',
+      'role.worker': 'agent',
+    },
+    ru: {
+      'mode.conductor': 'Conductor',
+      'mode.conductor.hint': 'Трое делят файлы, дирижёр принимает работу',
+      'role.conductor': 'дирижёр',
+      'role.worker': 'агент',
+    },
+    zh: {
+      'mode.conductor': '指挥',
+      'mode.conductor.hint': '三个智能体划分文件，指挥验收成果',
+      'role.conductor': '指挥',
+      'role.worker': '智能体',
+    },
+  }
+  for (const locale of Object.keys(expected)) {
+    for (const key of Object.keys(expected[locale])) {
+      assert.equal(dictionaries[locale]?.[key], expected[locale][key], locale + ' has ' + key)
+    }
+  }
+  assert.equal(state.report.version, '0.5.0', 'the diagnostics report carries the release version')
+  assert.equal(state.realm.window.__DSH_ARTEL_DEBUG__.version, '0.5.0')
+})
+
+test('modeLabel, agentProgress and agentRole know the conductor', () => {
+  const realm = createRealm()
+  const plugin = realm.load()
+  plugin.apply(createCtx(realm).ctx)
+  const debug = realm.window.__DSH_ARTEL_DEBUG__
+  assert.ok(debug !== undefined)
+  const t = (locale) => (key) => (debug.dictionaries[locale][key] !== undefined ? debug.dictionaries[locale][key] : key)
+  const ruT = t('ru')
+  const enT = t('en')
+  const zhT = t('zh')
+
+  assert.equal(debug.modeLabel(enT, 'conductor'), 'Conductor')
+  assert.equal(debug.modeLabel(zhT, 'conductor'), '指挥')
+
+  const conductorRun = {
+    mode: 'conductor',
+    status: 'running',
+    agents: [
+      { id: 'c1', name: 'Iris', role: 'conductor', status: 'idle' },
+      { id: 'a1', name: 'Vega', role: 'worker', status: 'idle' },
+      { id: 'a2', name: 'Nova', role: 'worker', status: 'working' },
+      { id: 'a3', name: 'Rill', role: 'worker', status: 'failed' },
+    ],
+  }
+  assert.deepEqual(debug.agentProgress(conductorRun), { done: 2, total: 3 }, 'the conductor is not one of the shares')
+  assert.deepEqual(debug.agentProgress({ agents: [conductorRun.agents[0]] }), { done: 0, total: 0 }, 'a conductor-only run has no shares')
+  assert.equal(debug.runMeta(ruT, conductorRun), 'Conductor · 2/3 · В работе')
+
+  assert.equal(typeof debug.agentRole, 'function', 'agentRole is exported for tests')
+  assert.equal(debug.agentRole(ruT, conductorRun, 'Iris'), 'дирижёр', 'the conductor role is translated')
+  assert.equal(debug.agentRole(ruT, conductorRun, 'Vega'), 'агент', 'the worker role is translated')
+  assert.equal(debug.agentRole(ruT, DEFAULT_RUN, 'Nova'), 'dev', 'a role without a dictionary key stays raw')
+  assert.equal(debug.agentRole(ruT, conductorRun, 'Nobody'), 'agent', 'an unknown agent keeps the plain fallback role')
+})
+
+test('hero offers the Conductor mode and starts a conductor run', async () => {
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [],
+      nextRunId: 'run-conductor',
+      newRunFeed: [{ seq: 1, at: '2026-01-01T11:00:00Z', kind: 'assistant', agent: 'Iris', text: 'Работа принята целиком.' }],
+    },
+  })
+  const tree = await renderLauncher(state)
+  findByClass(tree, 'dsh-artel-launcher').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  await state.realm.renderer.flush()
+
+  let hero = findByClass(state.realm.renderer.tree(), 'dsh-artel-hero')
+  assert.ok(hero !== undefined, 'the hero is shown before a run is selected')
+  let options = findAll(findByClass(hero, 'dsh-artel-segmented'), (node) => node.type === 'button' && node.props.role === 'radio')
+  assert.equal(options.length, 3, 'solo, swarm and conductor are the three modes')
+  assert.deepEqual(options.map((option) => option.props.children[0]), ['Solo', 'Swarm', 'Conductor'])
+  assert.equal(options[2].props.title, 'Трое делят файлы, дирижёр принимает работу', 'the option carries its own hint')
+  assert.equal(options[2].props['aria-checked'], false)
+  assert.equal(textOf(findByClass(hero, 'dsh-artel-hero__mode-hint')).trim(), 'Один агент, одна копия', 'the hint follows the selected mode')
+
+  options[2].props.onClick()
+  await state.realm.renderer.flush()
+  hero = findByClass(state.realm.renderer.tree(), 'dsh-artel-hero')
+  options = findAll(findByClass(hero, 'dsh-artel-segmented'), (node) => node.type === 'button' && node.props.role === 'radio')
+  assert.equal(options[2].props['aria-checked'], true, 'the conductor option becomes selected')
+  assert.equal(textOf(findByClass(hero, 'dsh-artel-hero__mode-hint')).trim(), 'Трое делят файлы, дирижёр принимает работу')
+
+  const textarea = findAll(hero, (node) => node.type === 'textarea' && node.props.className === 'dsh-artel-hero__textarea')[0]
+  assert.ok(textarea !== undefined)
+  textarea.props.onChange({ target: { value: 'Проведите работу через дирижёра' } })
+  await state.realm.renderer.flush()
+  findButton(state.realm.renderer.tree(), 'Поехали →').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  const started = await state.realm.renderer.flush()
+
+  const post = state.realm.calls.find((call) => call.pathname === '/api/dsh-artel/runs' && call.method === 'POST')
+  assert.ok(post !== undefined, 'the run start reached the Host')
+  assert.equal(post.body.mode, 'conductor', 'the conductor mode travels with the run')
+  assert.equal(post.body.task, 'Проведите работу через дирижёра')
+  assert.ok(findByClass(started, 'dsh-artel-run') !== undefined, 'the run pane replaces the hero')
+  const runText = textOf(findByClass(started, 'dsh-artel-run'))
+  assert.match(runText, /Conductor/)
+  assert.match(runText, /Работа принята целиком\./)
+
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('store.startRun normalizes the conductor mode and keeps solo as the default', async () => {
+  const state = setup({ scenario: { project: DEFAULT_PROJECT, runs: [], nextRunId: 'run-normalized' } })
+  const debug = state.realm.window.__DSH_ARTEL_DEBUG__
+  const store = debug.getStore('sess-1')
+  store.open()
+  await state.realm.settle()
+  await state.realm.settle()
+
+  const posts = () => state.realm.calls.filter((call) => call.pathname === '/api/dsh-artel/runs' && call.method === 'POST')
+
+  await store.startRun({ task: 'Собери команду', mode: 'conductor', projectPath: DEFAULT_PROJECT.projectPath })
+  await state.realm.settle()
+  assert.equal(posts().length, 1)
+  assert.equal(posts()[0].body.mode, 'conductor', 'the conductor mode is passed through')
+
+  await store.startRun({ task: 'Один агент', mode: 'solo' })
+  await state.realm.settle()
+  assert.equal(posts().length, 2)
+  assert.equal(posts()[1].body.mode, 'solo', 'solo stays solo')
+
+  await store.startRun({ task: 'Неизвестный режим', mode: 'bogus' })
+  await state.realm.settle()
+  assert.equal(posts().length, 3)
+  assert.equal(posts()[2].body.mode, 'solo', 'an unknown mode falls back to solo')
+
+  store.dispose()
 })

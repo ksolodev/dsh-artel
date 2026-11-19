@@ -14,42 +14,59 @@ The panel belongs to this session, and the session's working directory is the pr
 1. Open a chat whose working directory contains the project.
 2. Click **Artel** in the tool row under the chat composer (next to **+**). While a run in this
    session is active, the button shows a dot.
-3. The panel covers the chat area. To get back to the chat, use **← Chat** in the panel header or
+3. The panel covers the chat area. To get back to the chat, use **Chat** in the panel header or
    press Esc. Closing the panel does not stop the run: the agents keep working, and the next time
    you open the panel it returns to the last selected run.
 
-The header holds **← Chat**, the title **Artel**, the status of the selected run, and **Refresh** (it
+The header holds **Chat** (a back chevron and the word), the title **Artel**, the status of the selected run, and **Refresh** (it
 re-reads the run list and the open run; the feed itself updates while the panel is open).
 
 The left side is the **Sessions** rail: every Artel run of the current session, grouped by project.
 A row shows a state dot, the task and a short `Solo · 1/3 · phase` line — the mode, how many agents
 have finished a turn out of the total, and the current phase (the last status or plan message). The
-active run is highlighted; clicking a row opens its page. **+ New Artel** returns to the new-run
-form, and the rail footer shows `{n} runs` and `{n} files`. While there are no runs the rail says
-"No Artel runs yet." and "Describe a task on the right — the agents work in an isolated copy.".
+active run is highlighted; clicking a row opens its page. **New session** returns to the new-run
+form from a run page, and the rail footer shows `{n} sessions` and `{n} files`. While there are no
+runs the rail says "No sessions yet."; the create action is hidden while the form is already open.
 
-## New Artel
+## New task
 
-The form takes the right side of the panel. Its heading names the project and the mode: "New Artel
-in <project> · via <mode>". If the project is not known yet the heading is shorter: "New Artel ·
-via <mode>".
+The form takes the right side of the panel. Its heading is the short "New task"; the model and
+effort pickers open a menu with provider sections, a checkmark on the current value and full
+keyboard support, and the note under the card names the project the run will work in and says
+that it works in an isolated copy.
 
-1. Describe the task in "What should the agents do? Describe the task…": what should come out and
+1. Describe the task in "Describe the task for the agents…": what should come out and
    where it lives in the project. You do not need to prepare any files — the agents find and read
    them.
-2. Pick a mode: **Solo** ("One agent, one copy") or **Swarm** ("Three agents divide the files").
+2. Pick a mode: **Solo** ("One agent, one copy"), **Swarm** ("Three agents divide the files") or
+   **Conductor** ("Three agents divide the files; the conductor accepts the work").
 3. Press **Go →** (or Ctrl+Enter). While the request is in flight the button reads "Starting…".
 
 Below the form: "Artel works in an isolated copy of the project. Your files stay untouched until you
 apply the changes." If a run does not start, a banner titled "Could not start Artel" with the error
 text appears under the button.
 
+## Model and reasoning effort
+
+The new-run form also picks the route. **Model** groups every provider the profile advertises and the
+models it offers; **Effort** offers the reasoning efforts that model reports, with **Auto** meaning
+the adapter default. Artel starts every agent of the run on that route. Without a choice the agents
+use the profile default model.
+
+On the run page the route bar under the header lists the agents with their own **model** and
+**effort** pickers, so one member can plan on a cheap model and edit with a strong one. Changing a
+row reroutes that agent only, from its next step — the step already running keeps the route it
+started with. The bar is read-only once the run has been applied or discarded. If the Host cannot
+reach an agent, the row keeps the profile default and the feed shows a warning instead of failing
+the run.
+
 ## Starting a run
 
 Artel then:
 
 1. copies the project into a separate directory outside it;
-2. starts one agent (Solo) or three (Swarm) with the copy as their working directory;
+2. starts one agent (Solo), three (Swarm) or a conductor with its workers (Conductor), all with the
+   copy as their working directory;
 3. hands them the task and a few rules: edit only the copy, never touch the real project, run the
    appropriate checks and finish by explaining what was done.
 
@@ -103,10 +120,47 @@ If nobody claims an area during the planning turn, Artel asks again. If the seco
 too, Artel splits the top level of the project between the agents so the run does not stall, and
 says so in the feed.
 
+## Conductor
+
+A conductor leads the team and answers for the result. It is one more agent on top of the Swarm team:
+one conductor plus the configured number of workers (`swarmAgentCount`, three by default), one shared
+copy, one conversation tree. The run happens in five acts.
+
+**1. The task reaches the team.** The workers and the conductor start on the copy and read the project.
+The workers each propose a narrow area; the conductor ends the planning turn with its decision. Nothing
+is edited in this step, and the feed shows the proposal as a **Plan** card: "Proposed shares (the
+conductor decides)".
+
+**2. The shares are handed out.** The conductor approves the layout or reassigns it — its word is
+final, so a dispute over whose file it is cannot go round in circles. Artel sends each worker its area
+and shows the final map in a **Plan** card: "The shares are handed out. No edits yet." This is the
+*shares handed out / no edits yet* moment of the run.
+
+**3. The files are edited in parallel.** The workers edit their own files while the conductor watches.
+A worker that is stuck asks the conductor and gets an answer without waiting for you. If a worker fails
+or stops, the conductor moves its share to a live worker and the feed names both — the files are edited
+in parallel while *your project stays untouched*.
+
+**4. The conductor accepts the work as a whole.** When every worker is idle, the conductor reads the
+changed files, runs the project's checks and compares the copy with the task. It answers **accept** or
+**rework**: a rework sends the named shares back with remarks while the others are accepted for now —
+*share B is back for rework, shares A and C are accepted*. A run gets at most two rework rounds; a third
+request is turned into an accept with remarks, and the run goes to you with those remarks.
+
+**5. The decision is yours.** An accepted run ends **Waiting for you**, like the other modes. The
+**Changes** card shows one combined diff of the whole copy, and the panel notes that the checks ran and
+the conductor accepted the result — but nothing has entered your project yet: **Apply** is still the
+button that writes it. The checks are done, the decision is yours.
+
+Conductor needs the subagent stack in the DSH profile: without it the run is refused with "Conductor
+mode needs the subagent stack in this profile." There is no fallback to independent sessions. While the
+conductor is deciding the shares, reviewing the copy or handing a share over, Artel refuses messages
+with "The conductor is deciding. Wait for the next stage."; from the next stage writing works again.
+
 ## The run page
 
-The selected run's page opens on the right: the task at the top, the mode tag (**Solo** or
-**Swarm**), the status, a tag with the number of changed files (once there are any) and a phase line
+The selected run's page opens on the right: the task at the top, the mode tag (**Solo**, **Swarm** or
+**Conductor**), the status, a tag with the number of changed files (once there are any) and a phase line
 — the same short stage description as in the rail.
 
 Run statuses: **Preparing**, **Planning**, **Working**, **Waiting for you**, **Finished**,
@@ -124,7 +178,9 @@ it back to work.
 - Full agent replies: an avatar with the initial, the name, the role and the time; the text is
   rendered as markdown.
 - Tool calls are grouped into compact rows: the tool name and the file path or command.
-- Status rows with a timestamp and a **Plan** card with the split of work.
+- Status rows with a timestamp and a **Plan** card with the split of work. In Conductor mode the
+  **Plan** card also carries the conductor's decisions: the handed-out shares, the rework round and the
+  acceptance.
 - Your messages: a bubble labelled "You → Everyone" or "You → <agent>".
 - Agents talking to each other: the sender's name, an arrow and the message text.
 - **Edit collision** when two agents touched one path; **Error** when an agent's turn failed. Both
@@ -138,7 +194,9 @@ while it loads, "Loading the feed…".
 The field at the bottom is "Write to the agents…", with a **Send** button. The footer has **To**:
 **Everyone** by default, and a specific agent can also be chosen. Next to it: "Ctrl+Enter — send".
 The message appears in the feed as "You → …" and puts a waiting or stopped run back to work while the
-copy is still neither applied nor discarded.
+copy is still neither applied nor discarded. In Conductor mode a message is refused while the conductor
+is deciding the shares, reviewing the copy or handing a share over — the feed says "The conductor is
+deciding. Wait for the next stage." — and writing works again from the next stage.
 
 ## Changes: apply or discard
 

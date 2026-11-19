@@ -42,6 +42,20 @@ function fakeHost(options = {}) {
   }
   const liveAgents = new Map()
   const sessions = new Map()
+  const selections = []
+  const selected = new Map()
+  const attachModel = (agent) => {
+    if (options.agentModels === false) return agent
+    agent.model = {
+      current() { return selected.get(agent.id) },
+      select(selection) {
+        if (options.rejectModel === true) throw new Error('the adapter refused the route')
+        selections.push({ sessionId: agent.id, selection })
+        selected.set(agent.id, selection)
+      },
+    }
+    return agent
+  }
   const sessionOf = (sessionId, mode) => {
     let session = sessions.get(sessionId)
     if (session === undefined) {
@@ -60,7 +74,7 @@ function fakeHost(options = {}) {
       calls.created.push(request)
       const session = sessionOf(request.sessionId, options.childMode ?? 'read-only')
       const agent = options.noSessions === true ? { id: request.sessionId } : { id: request.sessionId, session }
-      liveAgents.set(request.sessionId, agent)
+      liveAgents.set(request.sessionId, attachModel(agent))
       return { sessionId: request.sessionId }
     },
     async rename(request) {
@@ -89,7 +103,7 @@ function fakeHost(options = {}) {
       // resolves; the fake does the same so the driver can reach it.
       const childId = options.childId ?? 'member-1'
       const childSession = sessionOf(childId, options.memberMode ?? 'read-only')
-      liveAgents.set(childId, { id: childId, session: childSession })
+      liveAgents.set(childId, attachModel({ id: childId, session: childSession }))
       return {
         childId,
         name: spec.name,
@@ -119,10 +133,34 @@ function fakeHost(options = {}) {
     },
   }
   const handlers = new Map()
+  const llm = options.noLlm === true ? undefined : {
+    listProviders: () => options.providers ?? [{ id: 'test', name: 'Test' }],
+    listModels: (providerId) => (options.modelsByProvider ?? {})[providerId] ?? [
+      { id: 'fast', name: 'Fast' },
+      { id: 'slow', name: 'Slow' },
+    ],
+    // The real service is `resolveModelInfo(provider, model, signal?)`: a pair
+    // object silently degrades every effort list to empty, so the fake refuses
+    // one and records the positional arguments.
+    resolveModelInfo: (providerId, modelId) => {
+      if (typeof providerId !== 'string' || typeof modelId !== 'string') {
+        throw new Error('resolveModelInfo takes the provider route and the model id, not a pair object')
+      }
+      options.infoCalls?.push([providerId, modelId])
+      return (options.infoByModel ?? {})[modelId] ?? (modelId === 'fast'
+        ? { reasoning: { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'low' } }
+        : {})
+    },
+  }
+  const defaultModel = {
+    currentSelection: () => options.defaultSelection ?? { provider: 'test', model: 'fast', reasoningEffort: 'low' },
+  }
   const ctx = {
     get(name) {
       if (name === 'sessionController') return options.noController === true ? undefined : controller
       if (name === 'agents') return agents
+      if (name === 'llm') return llm
+      if (name === 'agentDefaultModel') return options.noDefaultModel === true ? undefined : defaultModel
       if (name === 'subagents') return options.peers === false ? undefined : subagents
       if (name === 'sessions') return options.noSessions === true ? undefined : { get: (sessionId) => sessions.get(sessionId) }
       if (name === 'approval') return approval
@@ -134,7 +172,7 @@ function fakeHost(options = {}) {
       return () => handlers.delete(event)
     },
   }
-  return { ctx, calls, handlers, parentAgent, subagents, sessions, agents }
+  return { ctx, calls, handlers, parentAgent, subagents, sessions, agents, selections }
 }
 
 test('mapSessionEvent turns durable events into feed events', () => {
@@ -440,4 +478,81 @@ test('session events reach the engine as peer messages', async () => {
     await flush()
   }
   assert.equal(received.length, 1, 'a disposed driver stops observing')
+})
+
+test('listModels builds the catalog the Host can really call', async () => {
+  const infoCalls = []
+  const host = fakeHost({ infoCalls })
+  const driver = new HostDriver(host.ctx, { log: { warn() {} } })
+  await driver.init()
+  const catalog = await driver.listModels()
+  assert.deepEqual(infoCalls, [['test', 'fast'], ['test', 'slow']], 'metadata is resolved per provider route and model id')
+  assert.deepEqual(catalog.providers, [{
+    id: 'test',
+    name: 'Test',
+    models: [
+      { id: 'fast', name: 'Fast', efforts: [{ id: 'low', label: 'Low' }, { id: 'high', label: 'High' }], defaultEffort: 'low' },
+      { id: 'slow', name: 'Slow', efforts: [] },
+    ],
+  }])
+  assert.deepEqual(catalog.default, { provider: 'test', model: 'fast', reasoningEffort: 'low' })
+  await driver.dispose()
+})
+
+test('a created agent is routed to the run selection from its next step', async () => {
+  const host = fakeHost()
+  const driver = new HostDriver(host.ctx, { log: { warn() {} } })
+  await driver.init()
+  const handle = await driver.createAgent({
+    name: 'Vega',
+    mode: 'solo',
+    projectPath: 'p',
+    copyPath: 'c',
+    agentId: 'a1',
+    model: { provider: 'test', model: 'fast', reasoningEffort: 'high' },
+  })
+  assert.deepEqual(handle.model, { provider: 'test', model: 'fast', reasoningEffort: 'high' })
+  assert.deepEqual(host.selections, [{ sessionId: handle.sessionId, selection: { provider: 'test', model: 'fast', reasoningEffort: 'high' } }])
+
+  const rerouted = await driver.selectModel(handle, { provider: 'test', model: 'slow' })
+  assert.deepEqual(rerouted, { provider: 'test', model: 'slow' })
+  assert.deepEqual(handle.model, { provider: 'test', model: 'slow' })
+  assert.equal(host.selections.length, 2, 'the routable agent is written through agent.model.select')
+  await driver.dispose()
+})
+
+test('a refused or unreachable route degrades to a warning, it does not kill the run', async () => {
+  const host = fakeHost({ rejectModel: true })
+  const driver = new HostDriver(host.ctx, { log: { warn() {} } })
+  await driver.init()
+  const handle = await driver.createAgent({
+    name: 'Vega',
+    mode: 'solo',
+    projectPath: 'p',
+    copyPath: 'c',
+    agentId: 'a1',
+    model: { provider: 'test', model: 'fast' },
+  })
+  assert.equal(handle.model, undefined, 'the route was never recorded')
+  assert.match(handle.modelError, /refused the route/)
+  await assert.rejects(
+    () => driver.selectModel(handle, { provider: 'test', model: 'fast' }),
+    /refused the route/,
+    'an explicit reroute surfaces the error to the caller',
+  )
+  await driver.dispose()
+
+  const blind = fakeHost({ agentModels: false })
+  const blindDriver = new HostDriver(blind.ctx, { log: { warn() {} } })
+  await blindDriver.init()
+  const blindHandle = await blindDriver.createAgent({
+    name: 'Vega',
+    mode: 'solo',
+    projectPath: 'p',
+    copyPath: 'c',
+    agentId: 'a1',
+    model: { provider: 'test', model: 'fast' },
+  })
+  assert.match(blindHandle.modelError, /cannot reach the live Agent/)
+  await blindDriver.dispose()
 })

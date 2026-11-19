@@ -4,6 +4,100 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-11-20
+
+### Added
+
+- **Conductor mode — a swarm with a lead that accepts the work.** One conductor plus `swarmAgentCount`
+  workers (three by default) share one copy, like Swarm, but the conductor stands above the team. The
+  first turn is planning only: the workers propose their shares, the conductor approves or reassigns
+  them (`SHARES:`), and nothing is edited until the shares are handed out. While the workers edit in
+  parallel, a worker's question reaches the conductor and is answered without the user, and when a
+  worker stops the conductor moves its share to another worker.
+- **Whole-copy review with checks.** When every worker is idle, the conductor reads the changed files,
+  runs the project's checks and compares the copy with the task, then ends with `VERDICT: accept` or
+  `VERDICT: rework` plus the optional `REWORK:` list of who must redo their share. A run gets at most
+  two rework rounds; a third request is turned into an accept with remarks, and the remarks travel with
+  the changes.
+- **Accepted work still waits for you.** A conductor run ends `waiting for you` with one combined diff;
+  only your **Apply** writes the project. Conductor needs the subagent stack: a profile without it
+  refuses the run (`artel/peers-required`) instead of falling back to independent sessions.
+- **Conductor in the UI.** The new-run form has a third mode, **Conductor** ("Three agents divide the
+  files; the conductor accepts the work"), and the feed labels the conductor's role separately
+  (`conductor` in en, «дирижёр» in ru, 指挥 in zh) from the workers' agent label. The run page lists the
+  conductor on top of the workers, and messages are refused with «The conductor is deciding» while the
+  shares, the review or a handover are in flight.
+- `lib/conductor.js` — pure share/verdict parsers, failure classification, change digest and handover
+  helpers — with `test/conductor.test.js`; the engine and client tests cover the conductor flow.
+- The README, ARCHITECTURE.md, the en/ru/zh guide (a five-act Conductor walkthrough), the publishing
+  checklist and the plugin's locale description now cover Conductor; version `0.5.0` in
+  `package.json`, `lib/index.js` and the client bundle.
+
+### Changed
+
+- `swarmAgentCount` now also sets the number of Conductor workers; a Conductor run starts
+  `1 + swarmAgentCount` agents, and the docs no longer describe the plugin as Solo and Swarm only.
+
+## [0.4.0] — 2026-11-19
+
+### Changed
+
+- **A redesigned surface.** The overlay is now a layered glass sheet on a small token system
+  (`--a-accent`, `--a-grad`, `--a-line`, `--a-ease`): 20px corners, layered radial/linear lighting,
+  a softer and larger shadow, custom scrollbars and a visible `:focus-visible` ring on every control.
+- The rail turned into cards: the new-run control is an accent pill, each run row lifts on hover and
+  an active run carries an accent bar on its leading edge.
+- The new-run form reads as one composer card: a short «New task» title, the task field on top and a
+  footer holding the mode switch, the model and effort pickers (pill-shaped, borderless chips with
+  a single chevron) and a gradient primary action.
+- The new-run page lost the project/mode eyebrow and the jargon heading: one «New task» title, one
+  plus on the create action, one back arrow on the chat button, and one chevron per picker. The
+  create action is hidden while the form is already open, and the project name moved into the note
+  under the form.
+- **Apple-style picker menus.** The model and effort pickers no longer open the native white OS
+  popup: each one paints a translucent, blurred panel with provider captions, rounded rows, a
+  checkmark on the current value and the arrow/Home/End/Enter/Esc keyboard model. The same menu
+  serves the agent route bar and the composer recipient picker.
+- The agent route bar is a row of pills with the agent avatar, and the feed gained avatar rings, role
+  pills, entrance animation, tool cards with a monospace tool chip, an accent bar on plans and a
+  gradient user bubble.
+- The launcher glows while a run is live and pulses its dot while one is starting or working; the
+  overlay header carries the accent mark.
+- The surface clamps itself to the viewport, so a stale or oversized conversation box can no longer
+  push the panel past the window edge. Narrow windows keep the rail at a 200px floor, and
+  `prefers-reduced-motion` disables the entrance and pulse animations.
+
+## [0.3.0] — 2026-11-19
+
+### Added
+
+- **Provider, model and reasoning effort per agent.** The new-run form now shows a **Model** picker
+  (every provider the profile advertises, grouped) and an **Effort** picker for the model's reasoning
+  efforts (`Auto` = the adapter default). The whole run starts on that route, and the run refuses a
+  route the profile does not advertise (`artel/model-unavailable`).
+- A route bar on the run page: each agent has its own model and effort selectors. Changing one row
+  reroutes only that agent, from its next step, through `agent.model.select()` — the running step
+  keeps the route it started with. The bar is read-only for applied and discarded runs.
+- `GET /api/dsh-artel/models` returns the catalog built from `ctx.llm` (providers, models, reasoning
+  efforts, the profile default), and `POST /api/dsh-artel/runs/:id/agents/:agentId/model` reroutes one
+  live agent. Run summaries now carry each agent's `model`.
+- `lib/models.js` (pure helpers: `buildCatalog`, `normalizeSelection`, `validateSelection`, …) with
+  its own test file; the catalog is cached for 30 s and refreshed on demand.
+
+### Changed
+
+- A route the Host cannot reach (missing Agent, refusing adapter) does not fail the run: the agent
+  stays on the profile default and the feed carries a warning.
+- The spawn-based swarm applies the route right after the child Session exists, because the subagent
+  spawn provider takes no model options at creation time.
+
+### Fixed
+
+- The catalog asked `ctx.llm.resolveModelInfo()` with a single pair object, but the service takes the
+  provider route and the model id as two arguments. Registries rejected the lookup, so every model
+  looked effort-free and no effort picker appeared; metadata is now requested per provider/model, and
+  an effort's display text is read from `name` (the `ctx.llm` field) as well as `label`.
+
 ## [0.2.0] — 2026-11-19
 
 ### Added

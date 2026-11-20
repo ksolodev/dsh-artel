@@ -2643,7 +2643,7 @@ test('all three dictionaries carry the auto-queue and factory strings', () => {
     assert.deepEqual(Object.keys(dictionaries[locale]).sort(), english, locale + ' has every English key')
   }
   const queueAndFactory = english.filter((key) => key.startsWith('queue.') || key.startsWith('factory.'))
-  assert.equal(queueAndFactory.length, 190, 'every queue and factory string is present')
+  assert.equal(queueAndFactory.length, 213, 'every queue and factory string is present')
   const expected = {
     en: {
       'queue.title': 'Waiting',
@@ -2899,6 +2899,191 @@ test('branch actions load branch state and keep error details for the panel', as
   assert.deepEqual(store.getSnapshot().queueBranchError.details.drift.files, ['src/app.js'])
   assert.match(store.getSnapshot().queueBranchError.text, /uncommitted changes/)
   store.dispose()
+})
+
+test('the queue head shows the current branch and opens the branch panel', async () => {
+  const base = 'a'.repeat(40)
+  const branchQueue = {
+    ...queueFixture(),
+    model: 'branches',
+    project: { head: base, repoDir: 'C:\\state\\repos\\key.git', drift: { dirty: false, files: [] } },
+    currentBranchId: 'b-1',
+    branches: [
+      { id: 'b-1', name: 'Ночная', ref: 'refs/heads/artel/b-1', baseCommit: base, tipCommit: 'c'.repeat(40) },
+      { id: 'b-2', name: 'Дневная', ref: 'refs/heads/artel/b-2', baseCommit: base, tipCommit: null },
+    ],
+  }
+  const commits = { commits: [
+    { commit: 'c'.repeat(40), parents: [base], subject: 'Первая правка', date: '2026-11-21T03:00:00Z', files: 1, changeCount: 1 },
+    { commit: 'd'.repeat(40), parents: ['c'.repeat(40)], subject: 'Вторая правка', date: '2026-11-21T04:00:00Z', files: 2, changeCount: 2 },
+  ] }
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [],
+      route: ({ method, pathname }) => {
+        if (pathname === '/api/dsh-artel/queue' && method === 'GET') return reply(branchQueue)
+        if (pathname === '/api/dsh-artel/queue/branches' && method === 'GET') {
+          return reply({ queue: branchQueue, project: branchQueue.project, currentBranchId: 'b-1', branches: branchQueue.branches })
+        }
+        if (pathname === '/api/dsh-artel/queue/branches/b-1/commits' && method === 'GET') return reply(commits)
+        if (pathname === '/api/dsh-artel/factory' && method === 'GET') return reply({ boards: [] })
+        return undefined
+      },
+    },
+  })
+  let opened = await openArtel(state)
+  const strip = findByClass(opened, 'dsh-artel-queue')
+  const chip = findAll(strip, (node) => node.type === 'button' && String(node.props.className).includes('dsh-artel-queue__branchChip'))[0]
+  assert.ok(chip !== undefined, 'a branch queue shows the current-branch chip')
+  assert.match(textOf(chip), /Текущая ветка/)
+  assert.match(textOf(chip), /Ночная/)
+
+  chip.props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+  const modal = findByClass(opened, 'dsh-artel-branchModal')
+  assert.ok(modal !== undefined, 'the chip opens the branch panel')
+  assert.match(textOf(modal), /Дневная/)
+  assert.match(textOf(modal), /Коммиты: 2/)
+
+  findAll(modal, (node) => node.type === 'button' && String(node.props.className).includes('dsh-artel-branchModal__apply'))[0].props.onClick()
+  opened = await state.realm.renderer.flush()
+  const commitList = findByClass(opened, 'dsh-artel-branchModal__commits')
+  assert.ok(commitList !== undefined, 'the apply dialog lists the commits')
+  assert.match(textOf(commitList), /Первая правка/)
+  assert.match(textOf(commitList), /Вторая правка/)
+  assert.match(textOf(commitList), /ccccccc/)
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('the branch apply dialog sends the checked commits and the drift confirmation', async () => {
+  const base = 'a'.repeat(40)
+  const commitsList = [
+    { commit: '1'.repeat(40), parents: [base], subject: 'Первая правка', date: '2026-11-21T01:00:00Z', files: 1, changeCount: 1 },
+    { commit: '2'.repeat(40), parents: ['1'.repeat(40)], subject: 'Вторая правка', date: '2026-11-21T02:00:00Z', files: 1, changeCount: 1 },
+    { commit: '3'.repeat(40), parents: ['2'.repeat(40)], subject: 'Третья правка', date: '2026-11-21T03:00:00Z', files: 1, changeCount: 1 },
+  ]
+  const branchQueue = {
+    ...queueFixture(),
+    model: 'branches',
+    project: { head: base, repoDir: 'C:\\state\\repos\\key.git', drift: { dirty: true, files: ['src/app.js'] } },
+    currentBranchId: 'b-1',
+    branches: [{ id: 'b-1', name: 'Ночная', ref: 'refs/heads/artel/b-1', baseCommit: base, tipCommit: '3'.repeat(40) }],
+  }
+  const posts = []
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [],
+      route: ({ method, pathname, body }) => {
+        if (pathname === '/api/dsh-artel/queue' && method === 'GET') return reply(branchQueue)
+        if (pathname === '/api/dsh-artel/queue/branches' && method === 'GET') {
+          return reply({ queue: branchQueue, project: branchQueue.project, currentBranchId: 'b-1', branches: branchQueue.branches })
+        }
+        if (pathname === '/api/dsh-artel/queue/branches/b-1/commits' && method === 'GET') return reply({ commits: commitsList })
+        if (pathname === '/api/dsh-artel/queue/branches/b-1/apply' && method === 'POST') {
+          posts.push(body)
+          if (posts.length === 1) {
+            return reply({ error: 'The project has uncommitted changes.', code: 'artel/project-drift', details: { drift: { dirty: true, files: ['src/app.js'] } } }, 409)
+          }
+          return reply({ queue: { ...branchQueue, project: { ...branchQueue.project, drift: { dirty: false, files: [] } } } })
+        }
+        if (pathname === '/api/dsh-artel/factory' && method === 'GET') return reply({ boards: [] })
+        return undefined
+      },
+    },
+  })
+  let opened = await openArtel(state)
+  const strip = findByClass(opened, 'dsh-artel-queue')
+  findAll(strip, (node) => node.type === 'button' && String(node.props.className).includes('dsh-artel-queue__branchChip'))[0].props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+  const modal = findByClass(opened, 'dsh-artel-branchModal')
+  findAll(modal, (node) => node.type === 'button' && String(node.props.className).includes('dsh-artel-branchModal__apply'))[0].props.onClick()
+  opened = await state.realm.renderer.flush()
+
+  const commitList = findByClass(opened, 'dsh-artel-branchModal__commits')
+  const boxes = findAll(commitList, (node) => node.type === 'input' && node.props?.type === 'checkbox')
+  assert.equal(boxes.length, 3, 'the apply dialog lists every commit of the branch')
+  assert.equal(boxes[1].props.checked, true, 'every commit starts checked')
+  boxes[1].props.onChange({ target: { checked: false } })
+  opened = await state.realm.renderer.flush()
+
+  findAll(opened, (node) => node.type === 'button' && String(node.props.className).includes('dsh-artel-branchModal__applyGo'))[0].props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+  assert.equal(posts.length, 1, 'the first apply reached the Host')
+  assert.deepEqual(posts[0].commitIds, ['1'.repeat(40), '3'.repeat(40)], 'only the checked commits travel')
+  assert.equal(posts[0].confirmDrift, false)
+  assert.equal(posts[0].force, false)
+  const errorPanel = findByClass(opened, 'dsh-artel-branchModal__error')
+  assert.ok(errorPanel !== undefined, 'a drift refusal is explained in the panel')
+  assert.match(textOf(errorPanel), /src\/app\.js/)
+
+  findButton(findByClass(opened, 'dsh-artel-branchModal'), 'Всё равно применить').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  assert.equal(posts.length, 2, 'the second click applies after confirming the drift')
+  assert.equal(posts[1].confirmDrift, true)
+  assert.deepEqual(posts[1].commitIds, ['1'.repeat(40), '3'.repeat(40)])
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('a legacy queue keeps the versions path and says so', async () => {
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [],
+      route: ({ method, pathname }) => {
+        if (pathname === '/api/dsh-artel/queue' && method === 'GET') return reply(queueFixture())
+        if (pathname === '/api/dsh-artel/factory' && method === 'GET') return reply({ boards: [] })
+        return undefined
+      },
+    },
+  })
+  const opened = await openArtel(state)
+  const strip = findByClass(opened, 'dsh-artel-queue')
+  const chip = findAll(strip, (node) => node.type === 'button' && String(node.props.className).includes('dsh-artel-queue__branchChip'))
+  assert.equal(chip.length, 0, 'a legacy queue shows no branch chip')
+  assert.match(textOf(strip), /Старая очередь/)
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('a passed branch result shows its short commit and the apply shortcut', async () => {
+  const commit = 'f'.repeat(40)
+  const branchResults = queueFixture({
+    results: {
+      at: null,
+      stopReason: 'empty',
+      stopText: 'Очередь пуста.',
+      startedAt: '2026-01-01T09:00:00.000Z',
+      limit: 20,
+      passed: [{ taskId: 'q-1', title: 'Ночная задача', runId: 'run-auto', files: ['src/app.js'], changeCount: 1, check: { ok: true, command: 'npm test' }, commit }],
+      parked: [],
+      notTaken: [],
+    },
+  })
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [],
+      route: ({ method, pathname }) => {
+        if (pathname === '/api/dsh-artel/queue' && method === 'GET') return reply(branchResults)
+        if (pathname === '/api/dsh-artel/factory' && method === 'GET') return reply({ boards: [] })
+        return undefined
+      },
+    },
+  })
+  const opened = await openArtel(state)
+  const results = findByClass(opened, 'dsh-artel-queue__results')
+  assert.ok(results !== undefined, 'the queue results card is rendered')
+  assert.match(textOf(results), /fffffff/, 'a passed branch result shows its short commit')
+  assert.match(textOf(results), /Применить ветку/, 'the result offers the branch apply shortcut')
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
 })
 
 test('history marks auto-queue versions and the run header too', async () => {

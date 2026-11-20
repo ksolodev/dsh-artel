@@ -76,7 +76,9 @@ must run on the same machine.
 4. **Apply** — you press **Apply** and confirm. It writes every changed file into the project. Before
    writing, Artel checks each file against the state it had when the run started; a file you edited
    during the run is reported and the whole apply is refused, so nothing is half-written. **Discard**
-   deletes the copy and changes nothing.
+   deletes the copy and changes nothing. After an apply, a project that declares a DSH bundle or its own
+   install steps keeps an **Install** block on the card: those are separate explicit clicks that add the
+   project to the DSH profile or run the project's installer, and they never happen on their own.
 
 ## Five ways to run a task
 
@@ -271,6 +273,21 @@ When every agent is idle, Artel stops and waits for you:
 
 ![The Changes card](docs/artel-in-chat/screens/changes.png)
 
+An applied project can be something DSH itself has to pick up — a bundle or a plugin with its own
+installer. For those, the changes card keeps a second block open after **Apply**, and nothing in it
+happens by itself:
+
+- **Install into DSH** appears when the project is a DSH bundle: its `package.json` declares
+  `dsh.bundle.patch` and the patch file exists (or the project has a `cordis.patch.yml` at its root).
+  One click asks the Host plugin manager to add the *project folder* to the active DSH profile as a
+  local `link:` dependency. The card then says whether DSH loaded the bundle or a restart is needed.
+  A profile without the plugin manager gets the manual steps instead of the button.
+- **Install steps** are the commands the project itself declares in `artel.install.json`
+  (`{"steps": [{"title": "Install the runtime", "command": "python install/install.py"}]}`), or the
+  conventional installer script the project ships (`install/install.py`, `scripts/install.mjs`, …)
+  when it has no manifest. Each step is a row with its exact command and a **Run** button, one run per
+  click; the card shows the exit code, a timeout if it ran too long, and the captured output.
+
 The copy lives outside the project, under your DSH home directory. It is deleted as soon as you apply
 or discard the run, so reviewed copies do not pile up on disk.
 
@@ -338,6 +355,14 @@ independent-session fallback.
   you apply, and then it refuses to overwrite those files.
 - Only files are applied. Deleted files are deleted on Apply; renames arrive as one deletion and one
   addition.
+- Apply never installs anything and never runs the project's commands. The install block is a separate,
+  explicit click: installing a bundle changes the active DSH profile (the project folder becomes a
+  `link:` dependency there and DSH may need a restart), and an install step runs the project's own
+  command with your account, the project as its working directory, a five-minute limit and bounded
+  output. Read the command before you click it.
+- Install steps come only from the project (`artel.install.json` or a conventional installer script);
+  Artel never invents a command. A bundle install needs a profile that provides the Host plugin
+  manager — otherwise the card lists the manual steps and the project path instead of the button.
 - Apply is all-or-nothing for the run: either every changed file is written or, if a file conflicts,
   none is. The changes card has no per-file selection.
 - Swarm and Conductor agents live in one agent tree: the first agent is the session at the root of that

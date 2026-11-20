@@ -43,6 +43,12 @@ class FakeDriver {
   selections = []
   /** Live Host numbers per agent session, keyed like the real driver. */
   stats = new Map()
+  /** Set to false to model a profile without the plugin manager. */
+  bundleInstall = true
+  /** Projects the engine asked the plugin manager to install. */
+  bundleInstalls = []
+  /** What the fake plugin manager answers, or the Error it throws. */
+  bundleResult = { changed: true, application: 'restart-required', stage: 'install', target: '', restartReason: 'no-hmr' }
 
   async listModels() {
     return this.models
@@ -61,6 +67,16 @@ class FakeDriver {
 
   supportsPeers() {
     return this.peers
+  }
+
+  supportsBundleInstall() {
+    return this.bundleInstall
+  }
+
+  async installBundle(projectPath) {
+    this.bundleInstalls.push(projectPath)
+    if (this.bundleResult instanceof Error) throw this.bundleResult
+    return this.bundleResult
   }
 
   async createAgent({ name, mode, projectPath, copyPath, agentId, parentSessionId, model, sandboxMode }) {
@@ -1939,6 +1955,210 @@ test('approvePlan: an ordinary run and an unknown run are refused', async () => 
     await assert.rejects(() => f.engine.approvePlan(run.id), noPlan, 'a solo run has no gated plan')
     const unknown = (error) => error instanceof ArtelError && error.status === 404 && error.code === 'artel/unknown-run'
     await assert.rejects(() => f.engine.approvePlan('fg-does-not-exist'), unknown)
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+const BUNDLE_PACKAGE = JSON.stringify({
+  name: '@local/demo',
+  version: '1.0.0',
+  dsh: { bundle: { patch: './cordis.patch.yml' } },
+}, null, 2)
+const BUNDLE_PATCH = '- insert:\n    - id: demo\n      name: demo\n'
+const INSTALL_MANIFEST = 'artel.install.json'
+
+/** Write files into the fixture project before a run copies it. */
+async function writeProjectFiles(projectPath, files) {
+  for (const [relPath, content] of Object.entries(files)) {
+    const file = path.join(projectPath, relPath)
+    await fs.mkdir(path.dirname(file), { recursive: true })
+    await fs.writeFile(file, content)
+  }
+}
+
+/** Start a solo run, change one file in the copy, finish the turn and apply it. */
+async function startAndApply(f, task = 'Change the answer') {
+  const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task })
+  const handle = f.driver.created[f.driver.created.length - 1]
+  await f.driver.emit(handle, { kind: 'tool', tool: 'edit', path: 'src/app.js' })
+  await fs.writeFile(path.join(run.copyPath, 'src', 'app.js'), 'export const answer = 9\n')
+  await f.driver.emit(handle, { kind: 'turn-end' })
+  await f.engine.apply(run.id)
+  return run
+}
+
+test('apply records a DSH bundle and the card can install it into the running DSH', async () => {
+  const f = await fixture('install-bundle')
+  try {
+    await writeProjectFiles(f.projectPath, { 'package.json': BUNDLE_PACKAGE, 'cordis.patch.yml': BUNDLE_PATCH })
+    const run = await startAndApply(f)
+
+    const applied = f.engine.getRun(run.id)
+    assert.equal(applied.status, 'applied')
+    assert.equal(applied.install.bundle.name, '@local/demo')
+    assert.equal(applied.install.bundle.version, '1.0.0')
+    assert.equal(applied.install.bundle.installable, true)
+    assert.equal(applied.install.bundle.canInstall, true, 'this fake profile has a plugin manager')
+    assert.equal(applied.install.bundle.status, null)
+    assert.deepEqual(applied.install.steps, [])
+    const applyFeed = await f.engine.readFeed(run.id, { cursor: 0 })
+    assert.ok(applyFeed.events.some((event) => event.kind === 'status' && /DSH bundle/.test(event.text)), 'the run says what is still to install')
+
+    const installed = await f.engine.installBundle(run.id)
+    assert.deepEqual(f.driver.bundleInstalls, [f.projectPath], 'the plugin manager is asked for the real project folder')
+    assert.equal(installed.install.bundle.status, 'restart-required')
+    assert.equal(installed.install.bundle.result.restartReason, 'no-hmr')
+    const installFeed = await f.engine.readFeed(run.id, { cursor: 0 })
+    assert.ok(installFeed.events.some((event) => event.kind === 'status' && /Restart DSH/.test(event.text)))
+
+    const plan = await f.engine.installPlan(run.id)
+    assert.equal(plan.bundle.status, 'restart-required', 'a refresh keeps the finished result')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('a profile without a plugin manager offers the manual steps instead', async () => {
+  const f = await fixture('install-unsupported')
+  try {
+    f.driver.bundleInstall = false
+    await writeProjectFiles(f.projectPath, { 'package.json': BUNDLE_PACKAGE, 'cordis.patch.yml': BUNDLE_PATCH })
+    const run = await startAndApply(f)
+    assert.equal(f.engine.getRun(run.id).install.bundle.canInstall, false)
+    const unsupported = (error) => error instanceof ArtelError && error.status === 501 && error.code === 'artel/install-unsupported'
+    await assert.rejects(() => f.engine.installBundle(run.id), unsupported)
+    assert.deepEqual(f.driver.bundleInstalls, [], 'nothing was installed behind the user')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('a bundle the profile already has is reported as already installed', async () => {
+  const f = await fixture('install-already')
+  try {
+    f.driver.bundleResult = { changed: false, application: 'applied', stage: 'install', target: '' }
+    await writeProjectFiles(f.projectPath, { 'package.json': BUNDLE_PACKAGE, 'cordis.patch.yml': BUNDLE_PATCH })
+    const run = await startAndApply(f)
+    const installed = await f.engine.installBundle(run.id)
+    assert.equal(installed.install.bundle.status, 'already-installed')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('a failed install is reported without losing the changed bundle files', async () => {
+  const f = await fixture('install-failed')
+  try {
+    f.driver.bundleResult = new Error('the plugin manager refused the folder')
+    await writeProjectFiles(f.projectPath, { 'package.json': BUNDLE_PACKAGE, 'cordis.patch.yml': BUNDLE_PATCH })
+    const run = await startAndApply(f)
+    const installed = await f.engine.installBundle(run.id)
+    assert.equal(installed.install.bundle.status, 'failed')
+    assert.match(installed.install.bundle.result.errorMessage, /refused the folder/)
+    const feed = await f.engine.readFeed(run.id, { cursor: 0 })
+    assert.ok(feed.events.some((event) => event.kind === 'status' && /Could not install/.test(event.text)))
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('install steps run one click at a time and record their output', async () => {
+  const f = await fixture('install-steps')
+  try {
+    await writeProjectFiles(f.projectPath, {
+      [INSTALL_MANIFEST]: JSON.stringify({
+        steps: [
+          { title: 'Runtime', command: 'node -e "process.stdout.write(\'runtime ready\')"' },
+          { title: 'Broken', command: 'node -e "process.exit(4)"' },
+        ],
+      }),
+    })
+    const run = await startAndApply(f)
+    const applied = f.engine.getRun(run.id)
+    assert.equal(applied.install.steps.length, 2)
+    assert.deepEqual(applied.install.steps.map((step) => step.status), ['idle', 'idle'])
+    assert.equal(applied.install.steps[0].origin, 'manifest')
+
+    const afterFirst = await f.engine.runInstallStep(run.id, 0)
+    assert.equal(afterFirst.install.steps[0].status, 'done')
+    assert.equal(afterFirst.install.steps[0].exitCode, 0)
+    assert.match(afterFirst.install.steps[0].output, /runtime ready/)
+    assert.equal(afterFirst.install.steps[1].status, 'idle', 'one click runs one step')
+
+    const afterSecond = await f.engine.runInstallStep(run.id, 1)
+    assert.equal(afterSecond.install.steps[1].status, 'failed')
+    assert.equal(afterSecond.install.steps[1].exitCode, 4)
+
+    const feed = await f.engine.readFeed(run.id, { cursor: 0 })
+    assert.ok(feed.events.some((event) => event.kind === 'status' && /Install step “Runtime” finished\./.test(event.text)))
+    assert.ok(feed.events.some((event) => event.kind === 'status' && /failed \(exit code 4\)/.test(event.text)))
+
+    const unknown = (error) => error instanceof ArtelError && error.status === 404 && error.code === 'artel/unknown-install-step'
+    await assert.rejects(() => f.engine.runInstallStep(run.id, 7), unknown)
+    assert.equal(f.engine.getRun(run.id).install.steps[0].status, 'done', 'a refused click changes nothing')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('the install offers are only available on an applied run', async () => {
+  const f = await fixture('install-gated')
+  try {
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Change the answer' })
+    const refused = (error) => error instanceof ArtelError && error.status === 409 && error.code === 'artel/bad-status'
+    await assert.rejects(() => f.engine.installPlan(run.id), refused, 'nothing is applied yet')
+    await assert.rejects(() => f.engine.installBundle(run.id), refused)
+    await assert.rejects(() => f.engine.runInstallStep(run.id, 0), refused)
+    await assert.rejects(() => f.engine.installPlan('fg-does-not-exist'), (error) => error instanceof ArtelError && error.status === 404 && error.code === 'artel/unknown-run')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('installPlan re-reads the manifest and keeps a step that already ran', async () => {
+  const f = await fixture('install-refresh')
+  try {
+    const command = 'node -e "process.stdout.write(\'first\')"'
+    await writeProjectFiles(f.projectPath, {
+      [INSTALL_MANIFEST]: JSON.stringify({ steps: [{ title: 'First', command }] }),
+    })
+    const run = await startAndApply(f)
+    await f.engine.runInstallStep(run.id, 0)
+    assert.equal(f.engine.getRun(run.id).install.steps[0].status, 'done')
+
+    await fs.writeFile(path.join(f.projectPath, INSTALL_MANIFEST), JSON.stringify({
+      steps: [
+        { title: 'First', command },
+        { title: 'Second', command: 'node -e "process.stdout.write(\'second\')"' },
+      ],
+    }))
+    const refreshed = await f.engine.installPlan(run.id, { refresh: true })
+    assert.equal(refreshed.steps.length, 2, 'the new manifest is read from the project')
+    assert.equal(refreshed.steps[0].status, 'done', 'the finished step keeps its result')
+    assert.match(refreshed.steps[0].output, /first/)
+    assert.equal(refreshed.steps[1].status, 'idle')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('a run without install needs reports no install offers', async () => {
+  const f = await fixture('install-none')
+  try {
+    const run = await startAndApply(f)
+    assert.equal(f.engine.getRun(run.id).install, null)
+    assert.equal(await f.engine.installPlan(run.id), null)
+    const feed = await f.engine.readFeed(run.id, { cursor: 0 })
+    assert.equal(feed.events.some((event) => event.kind === 'status' && /install/i.test(event.text)), false, 'no install talk on a plain change')
   } finally {
     await f.engine.dispose()
     await f.cleanup()

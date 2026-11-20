@@ -451,6 +451,27 @@ but the only way forward is **Discard** and a new run.
 An apply is final: the run becomes **Applied**, its changes are in the project, and the isolated copy is
 deleted right away. The diff stays in the run feed, so you can still read what changed.
 
+### Install into DSH
+
+An applied project can be something DSH itself has to pick up. When that is the case, the card keeps an
+**Install** block open under the applied plate, and nothing in it happens by itself:
+
+- **Install into DSH** — the project is a DSH bundle (`package.json` declares `dsh.bundle.patch`, or a
+  `cordis.patch.yml` sits at its root). The button adds the project folder to the current DSH profile
+  as a local `link:` dependency. The card then says **Installed — restart DSH to load the bundle.** A
+  profile without the plugin manager shows the manual path instead — add the project folder by hand, as
+  the project README says.
+- **Install steps** — the project declares commands in `artel.install.json`
+  (`{"steps": [{"title": "Install the runtime", "command": "python install/install.py"}]}`, up to
+  eight), or it ships a conventional installer script (`install/install.py`, `scripts/install.mjs`, …).
+  Each step shows its exact command; **Run** asks once, then runs that one command only, with the
+  project as the working directory and a five-minute limit. The card shows the exit code, a timeout
+  remark, and the captured output (**Show output**).
+
+Step results stay on the card when you refresh it: a step whose command did not change keeps its
+result, a changed command starts from idle again. Nothing is installed and no command runs without your
+click, and a project without a bundle or install steps shows no install block at all.
+
 ## Where the data lives
 
 - Copies: `<DSH home>/artel/<profile>/copies/<run id>` — deleted when the run is applied or discarded; a

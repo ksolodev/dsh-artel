@@ -4,6 +4,39 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] — 2026-11-21
+
+### Added
+
+- **The applied project can now be installed into DSH — explicitly, from the changes card (issue #9).**
+  Apply only writes files, by design, so a project that is a DSH bundle or ships its own installer used to
+  end its run with no next step: the generated MCP bundle whose `install/install.py` materialises
+  `~/.pybrowser/runtime` was "applied", and DSH still knew nothing about it. `apply()` now detects what
+  the project needs (`detectInstallNeeds` in `lib/install.js`) and stores a read-only record on the run:
+  a bundle (`package.json` `dsh.bundle.patch`, or a root `cordis.patch.yml`) and install steps
+  (`artel.install.json`, or a conventional `install/install.py`, `scripts/install.mjs`, …). The changes
+  card keeps an **Install** block open under the applied plate. **Install into DSH** calls the Host
+  plugin manager's `installBundle` with the project folder — a local `link:` dependency in the active
+  profile — and reports installed, restart required, overridden, already installed or failed; each
+  declared step gets its own row and a **Run** button that runs that one command in the project folder
+  with a five-minute limit, then shows the exit code and the captured output. Nothing installs and no
+  command runs without a click.
+- **The plan knows install is not a part.** The Orchestrator planner prompt now says installing happens
+  after Apply with the exact command, so a run no longer schedules an install part it cannot execute; the
+  worker prompts say the same and point at `artel.install.json` and the README instead of trying to write
+  the profile or run an installer (their sessions keep approval policy `never`).
+- **Routes:** `GET /api/dsh-artel/runs/:id/install` (the record, `?refresh=1` re-reads the project),
+  `POST /api/dsh-artel/runs/:id/install/bundle`, `POST /api/dsh-artel/runs/:id/install/steps/:index`.
+  All three require an applied run and take a per-run lock.
+- **A profile without the plugin manager degrades to manual steps.** The card shows the project folder to
+  add by hand (DSH → Plugins → Add plugin) and the bundle route answers `501 artel/install-unsupported`.
+
+### Changed
+
+- `RunSummary` carries `install` (the detected record, or `null`). The changes card checks for it once on
+  a run that was applied before this version, so an old bundle project offers the install button without
+  a second Apply.
+
 ## [0.8.3] — 2026-11-21
 
 ### Fixed

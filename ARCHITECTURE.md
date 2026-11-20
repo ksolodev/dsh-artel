@@ -111,6 +111,7 @@ interface RunRecord {
   agents: AgentRecord[]
   plan?: OrchestratorPlan   // orchestrator runs
   merge?: MergeRecord       // orchestrator runs
+  install?: InstallRecord   // v0.9: what the applied project needs installed (see Post-apply install)
   createdAt: number
   updatedAt: number
 }
@@ -138,6 +139,46 @@ interface MergeRecord {
   conflicts: Array<{ path: string, parts: string[] }>
   unresolved: string[]
   merged: boolean
+}
+// v0.9: persisted by apply(), read-only detection of what the project needs installed.
+interface InstallRecord {
+  detectedAt: number
+  bundle: null | {
+    name: string
+    version: string | null
+    patch: string                  // the bundle patch the project ships, e.g. 'cordis.patch.yml'
+    installable: boolean           // the patch file exists and package.json has a name
+    status: null | 'installing' | 'installed' | 'restart-required' | 'overridden'
+          | 'cancelled' | 'already-installed' | 'failed'
+    result: null | BundleResult    // what the Host plugin manager answered
+  }
+  steps: Array<{
+    id: string                     // 'step-1', ...
+    index: number
+    title: string
+    command: string                // the exact command, never built from user text
+    origin: 'manifest' | 'detected' // artel.install.json or a conventional installer script
+    status: 'idle' | 'running' | 'done' | 'failed'
+    output: string | null          // captured stdout+stderr, head+tail window
+    outputTruncated: boolean
+    exitCode: number | null
+    timedOut: boolean
+    startedAt: number | null
+    finishedAt: number | null
+  }>
+  warnings: string[]               // e.g. a declared patch file that does not exist
+}
+interface BundleResult {
+  status: 'installed' | 'restart-required' | 'overridden' | 'cancelled'
+        | 'already-installed' | 'failed'
+  application: string              // the plugin manager's ChangeResult.application
+  restartReason: string | null
+  bundle: string | null
+  version: string | null
+  errorCode: string | null
+  errorMessage: string | null
+  warnings: string[] | null
+  at: number
 }
 interface AgentRecord {
   sessionId: string
@@ -179,7 +220,7 @@ interface FeedEvent {
 }
 ```
 
-Feed events are kept in memory + appended to `<DSH_HOME>/artel/<profile>/state/feeds/<id>.jsonl` (capped, rotated at ~2 MB) so a reload/GUI restart still shows history. Live stream can be re-read by cursor. `RunSummary` (what the client gets) adds `phase`, `changeCount`, `finishedAt`, `appliedAt`, `feedSeq`/`feedFloor`, for Orchestrator runs `plan` and `merge`, and in v0.8 `autoqueue`, `basePath`, `planApproval` and `planApproved`; the full `RunRecord` stays host-side.
+Feed events are kept in memory + appended to `<DSH_HOME>/artel/<profile>/state/feeds/<id>.jsonl` (capped, rotated at ~2 MB) so a reload/GUI restart still shows history. Live stream can be re-read by cursor. `RunSummary` (what the client gets) adds `phase`, `changeCount`, `finishedAt`, `appliedAt`, `feedSeq`/`feedFloor`, for Orchestrator runs `plan` and `merge`, in v0.8 `autoqueue`, `basePath`, `planApproval` and `planApproved`, and in v0.9 `install` (the applied project's post-apply install record); the full `RunRecord` stays host-side.
 
 The same summary carries the live view added in v0.8: `waitingFor` (`{kind: 'user' | 'approval' | 'agents' | 'host', names?, stage?, since}` — why the run is held and since when, cached in `runtime.waitSince` and cleared when a turn starts) and `spend` (the summed `usage` of every agent). Both are computed in `ArtelEngine#summary` from the runtime and the driver's `statsOf`, so they are read-only projections: they are never persisted and never appended to the feed. `agent.activity` is the last session event of that agent (`tool` with its name, or `assistant` with the first 240 characters), `agent.turns`/`turnStartedAt` come from `#onTurnStart`/`#onTurnEnd`.
 
@@ -212,6 +253,9 @@ All routes under `/api/dsh-artel/**`, JSON, same-origin + the connection's trust
 | GET | `/api/dsh-artel/runs/:id/diff` | `path` | `{ patch }` |
 | POST | `/api/dsh-artel/runs/:id/apply` | `{ paths? }` | `{ ...result, run }` |
 | POST | `/api/dsh-artel/runs/:id/discard` | — | `{ ok, run }` |
+| GET | `/api/dsh-artel/runs/:id/install` | `refresh?` | `{ install, run }` — the detected install record (`refresh=1` re-reads the project) |
+| POST | `/api/dsh-artel/runs/:id/install/bundle` | — | `{ run }` — installs the applied project folder into the active DSH profile |
+| POST | `/api/dsh-artel/runs/:id/install/steps/:index` | — | `{ run }` — runs one declared install step |
 
 v0.2 additions to the summary: `phase` (last `status`/`plan` line, ≤120 chars) so the rail can show
 `Solo · 3/6 · планирует` without fetching the feed. Requests are loopback-fenced
@@ -268,6 +312,53 @@ import field and localizes it by code.
 - **Diff**: git copy → `git add -A` (in the copy) then `git diff --cached <baseCommit>`; non-git → compare against the base hash manifest, diff each changed text file with a small internal line diff (LCS). Result: `[{path, status: 'added'|'modified'|'deleted', added, removed, binary}]` + per-file patch text.
 - **Apply**: for each changed file, verify the project file still matches `baseHashes` (otherwise `skipped: user edited this file during the run`), then write/delete it. Git repo additionally offers nothing fancier in v1 — copy-back is predictable and works for new/deleted files. Report a per-file result; never partially apply silently. An Orchestrator run with an unfinished merge (`merge.unresolved` non-empty) is refused before any of this with `409 artel/merge-incomplete`.
 - **Cleanup**: `discard`/`apply` removes the worktree (`git worktree remove --force`) or deletes the copy dir; a startup sweep removes copies whose run is terminal and older than `keepCopiesHours`; the project itself is only ever touched by `apply`.
+
+## Post-apply install (v0.9)
+
+Applying files is all Artel ever does to the project on its own. A project can also be something DSH has
+to pick up — a bundle for the running profile, or a tool with its own installer that writes outside the
+project (the issue-#9 case: a generated MCP bundle whose `install/install.py` materialises
+`~/.pybrowser/runtime`). Artel never installs that silently: `apply` records what the project asks for
+and the changes card offers it as explicit clicks.
+
+**Detection** (`detectInstallNeeds` in `lib/install.js`) runs right after `apply()` wrote the files and is
+read-only:
+
+- **Bundle** — `package.json` declares `dsh.bundle.patch`, or the project ships a root
+  `cordis.patch.yml`. `installable` requires the patch file to exist and `package.json` to have a `name`.
+- **Steps** — `artel.install.json`: `{ "steps": [ { "title": "...", "command": "..." } ] }`, validated
+  (no newlines, ≤600 characters, ≤8 steps, one command each, `origin: 'manifest'`). Without a manifest a
+  conventional installer script (`install/install.py`, `scripts/install.py`, `install/install.mjs|cjs|js`,
+  `scripts/install.mjs`, `install.mjs`, and on posix `install/install.sh`) is suggested as a detected
+  step. A manifest replaces the suggestions; broken entries and caps become `warnings`.
+- Plain projects record nothing (`install` stays `null`) and the card looks exactly as before.
+
+The record is persisted on the run (`InstallRecord` above); `RunStore.installSummary` is what the client
+sees, and `ArtelEngine#installView` adds `bundle.canInstall` — the record is installable *and* the Host
+exposes the plugin manager.
+
+**Installing the bundle** goes through the Host service, not a shell: `ctx.get('pluginManager')`
+(optional service, `@deepseek-ai/dsh-plugin-manager`) → `installBundle(absoluteProjectPath, {})`, which
+adds the project folder to the active profile as a local `link:` dependency and activates the bundle.
+The plugin manager's `ChangeResult` maps to the card's state: `application: 'applied'` → installed,
+`'restart-required'` → "restart DSH", plus `overridden`, `cancelled`, `changed: false` → already
+installed; a failure keeps the plugin manager's code and diagnostic. A profile without the manager
+answers `501 artel/install-unsupported` and the card falls back to the manual path (the project folder to
+add by hand). This is also where issue #9's planner gap is closed: the planner prompt says installing is
+not a part, and the worker prompts tell agents to describe required setup in `artel.install.json`/README
+instead of trying to run it (their sessions keep approval policy `never`; nothing escalates).
+
+**Running an install step** is a per-row action: `POST /runs/:id/install/steps/:index` spawns the recorded
+command with `shell: true`, `cwd = projectPath`, a 5-minute timeout (SIGKILL) and a bounded capture —
+6000 characters of head and 6000 of tail, with `outputTruncated` when there was more. Exit code, timeout
+flag and output are stored on the step and rendered in the card. One step per click; Artel never chains
+the steps and never re-runs a finished one by itself.
+
+All three routes require an applied run (`409 artel/bad-status`), take a per-run lock
+(`409 artel/install-busy`) and return the fresh run summary. `GET /runs/:id/install` answers the cached
+record; `refresh=1` re-reads the project and merges (`mergeInstallRecord`) so the results of steps whose
+command did not change survive. The client also re-runs that detection once for a run that was applied
+before this version, so an old bundle project still gets the button without a second Apply.
 
 ## Agents
 

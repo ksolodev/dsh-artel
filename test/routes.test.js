@@ -97,6 +97,41 @@ function fakeEngine() {
       calls.push({ method: 'discard', runId })
       return summary({ id: runId, status: 'discarded' })
     },
+    async installPlan(runId, options) {
+      calls.push({ method: 'installPlan', runId, options })
+      return {
+        detectedAt: 5,
+        bundle: { name: '@local/demo', version: '1.0.0', patch: 'cordis.patch.yml', installable: true, canInstall: true, status: null, result: null },
+        steps: [{ id: 'step-1', index: 0, title: 'Runtime', command: 'node install.mjs', origin: 'manifest', status: 'idle' }],
+        warnings: [],
+      }
+    },
+    async installBundle(runId) {
+      calls.push({ method: 'installBundle', runId })
+      return summary({
+        id: runId,
+        status: 'applied',
+        install: {
+          detectedAt: 5,
+          bundle: { name: '@local/demo', installable: true, canInstall: true, status: 'restart-required', result: { status: 'restart-required' } },
+          steps: [],
+          warnings: [],
+        },
+      })
+    },
+    async runInstallStep(runId, index) {
+      calls.push({ method: 'runInstallStep', runId, index })
+      return summary({
+        id: runId,
+        status: 'applied',
+        install: {
+          detectedAt: 5,
+          bundle: null,
+          steps: [{ id: 'step-1', index: 0, title: 'Runtime', command: 'node install.mjs', status: 'done', output: 'ok', exitCode: 0 }],
+          warnings: [],
+        },
+      })
+    },
   }
   return engine
 }
@@ -317,6 +352,34 @@ test('messages, interrupt, changes, diff, apply and discard answer with their pa
   assert.equal(apply.body.run.id, 'fg-1')
   const discard = await call(webServer.routes, `${API_PREFIX}/runs/fg-1/discard`, { method: 'POST' })
   assert.equal(discard.body.run.status, 'discarded')
+})
+
+test('the install routes answer with the plan, the bundle result and the step result', async () => {
+  const { webServer, engine } = setup()
+  const plan = await call(webServer.routes, `${API_PREFIX}/runs/fg-1/install?refresh=1`)
+  assert.equal(plan.status, 200)
+  assert.equal(plan.body.install.bundle.name, '@local/demo')
+  assert.equal(plan.body.run.id, 'fg-1')
+  assert.deepEqual(engine.calls.at(-2), { method: 'installPlan', runId: 'fg-1', options: { refresh: true } })
+
+  const cached = await call(webServer.routes, `${API_PREFIX}/runs/fg-1/install`)
+  assert.equal(cached.status, 200)
+  assert.deepEqual(engine.calls.at(-2), { method: 'installPlan', runId: 'fg-1', options: { refresh: false } })
+
+  const bundle = await call(webServer.routes, `${API_PREFIX}/runs/fg-1/install/bundle`, { method: 'POST' })
+  assert.equal(bundle.status, 200)
+  assert.equal(bundle.body.run.install.bundle.status, 'restart-required')
+  assert.deepEqual(engine.calls.at(-1), { method: 'installBundle', runId: 'fg-1' })
+
+  const step = await call(webServer.routes, `${API_PREFIX}/runs/fg-1/install/steps/0`, { method: 'POST' })
+  assert.equal(step.status, 200)
+  assert.equal(step.body.run.install.steps[0].status, 'done')
+  assert.deepEqual(engine.calls.at(-1), { method: 'runInstallStep', runId: 'fg-1', index: 0 })
+
+  const wrongMethod = await call(webServer.routes, `${API_PREFIX}/runs/fg-1/install/bundle`)
+  assert.equal(wrongMethod.status, 405)
+  const unknown = await call(webServer.routes, `${API_PREFIX}/runs/fg-1/install/nope`, { method: 'POST' })
+  assert.equal(unknown.status, 404)
 })
 
 test('the project route resolves the session directory and its name', async () => {

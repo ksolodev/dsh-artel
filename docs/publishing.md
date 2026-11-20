@@ -46,7 +46,7 @@ That produces `dist/<name>-<version>.tgz` containing:
 package.json  cordis.patch.yml  icon.svg  LICENSE  README.md
 lib/index.js  lib/client.js  lib/diff.js  lib/paths.js  lib/ownership.js
 lib/copy.js   lib/prompts.js  lib/run-store.js  lib/engine.js  lib/host-driver.js  lib/routes.js
-lib/models.js  lib/conductor.js  lib/fusion.js
+lib/models.js  lib/conductor.js  lib/fusion.js  lib/install.js
 locale/en.json  locale/ru.json  locale/zh.json
 docs/guide.md  docs/guide.ru.md  docs/guide.zh.md  docs/publishing.md
 ```

@@ -346,6 +346,49 @@ const REVIEW_CHANGES = [
   { path: 'assets/logo.png', status: 'binary', added: 0, removed: 0, binary: true, hunks: [] },
 ]
 
+/* ------------------------------------------- post-apply install (0.9.0) */
+
+const INSTALL_STEP = {
+  id: 'step-1',
+  index: 0,
+  title: 'Install the runtime',
+  command: 'python install/install.py',
+  origin: 'manifest',
+  status: 'idle',
+  output: null,
+  outputTruncated: false,
+  exitCode: null,
+  timedOut: false,
+  startedAt: null,
+  finishedAt: null,
+}
+
+/** The record the Host stores on an applied run (issue #9: DSH bundle + its installer). */
+const INSTALL_RECORD = {
+  detectedAt: 1700000000000,
+  bundle: {
+    name: '@local/pybrowser-mcp',
+    version: '1.0.0',
+    patch: 'cordis.patch.yml',
+    installable: true,
+    status: null,
+    result: null,
+    canInstall: true,
+  },
+  steps: [INSTALL_STEP],
+  warnings: [],
+}
+
+const APPLIED_INSTALL_RUN = {
+  ...DEFAULT_RUN,
+  id: 'run-applied',
+  mode: 'solo',
+  status: 'applied',
+  phase: 'Applied 3 files to your project.',
+  changeCount: 3,
+  install: INSTALL_RECORD,
+}
+
 /* ------------------------------------------------------- orchestrator (0.7.0) */
 
 const ORCHESTRATOR_PARTS = [
@@ -613,6 +656,28 @@ function createRealm(options = {}) {
         ? scenario.runs.map((entry) => entry.id === runId ? { ...entry, status: 'discarded' } : entry)
         : scenario.runs
       return json({ run: { ...DEFAULT_RUN, ...current, id: runId, status: 'discarded' } })
+    }
+    function patchRun(runId, patch) {
+      const runs = scenario.runs ?? []
+      scenario.runs = runs.map((entry) => entry.id === runId ? { ...entry, ...patch } : entry)
+      return (scenario.runs.find((entry) => entry.id === runId)) ?? { ...DEFAULT_RUN, id: runId, ...patch }
+    }
+    const installStepMatch = /^\/api\/dsh-artel\/runs\/([^/]+)\/install\/steps\/(\d+)$/.exec(pathname)
+    if (installStepMatch !== null && method === 'POST') {
+      const runId = decodeURIComponent(installStepMatch[1])
+      return json({ run: patchRun(runId, { install: scenario.installAfterStep ?? null }) })
+    }
+    const installBundleMatch = /^\/api\/dsh-artel\/runs\/([^/]+)\/install\/bundle$/.exec(pathname)
+    if (installBundleMatch !== null && method === 'POST') {
+      const runId = decodeURIComponent(installBundleMatch[1])
+      return json({ run: patchRun(runId, { install: scenario.installAfterBundle ?? null }) })
+    }
+    const installMatch = /^\/api\/dsh-artel\/runs\/([^/]+)\/install$/.exec(pathname)
+    if (installMatch !== null && method === 'GET') {
+      const runId = decodeURIComponent(installMatch[1])
+      const run = (scenario.runs ?? []).find((entry) => entry.id === runId) ?? DEFAULT_RUN
+      const install = scenario.install !== undefined ? scenario.install : (run.install ?? null)
+      return json({ install, run: { ...run, install } })
     }
     return notFound()
   }
@@ -1453,6 +1518,139 @@ test('review run renders the changes card, expands a diff and applies', async ()
   state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
 })
 
+test('an applied bundle offers Install into DSH and reports the restart', async () => {
+  const restart = {
+    ...INSTALL_RECORD,
+    bundle: {
+      ...INSTALL_RECORD.bundle,
+      status: 'restart-required',
+      result: {
+        status: 'restart-required',
+        application: 'restart-required',
+        restartReason: 'no-hmr',
+        bundle: '@local/pybrowser-mcp',
+        version: '1.0.0',
+        errorCode: null,
+        errorMessage: null,
+        warnings: [],
+        at: 1700000001000,
+      },
+    },
+  }
+  const state = setup({
+    scenario: { project: DEFAULT_PROJECT, runs: [APPLIED_INSTALL_RUN], installAfterBundle: restart },
+  })
+  const tree = await renderLauncher(state)
+  findByClass(tree, 'dsh-artel-launcher').props.onClick()
+  await state.realm.settle()
+  let opened = await state.realm.renderer.flush()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+
+  const card = findByClass(opened, 'dsh-artel-changes')
+  assert.ok(card !== undefined, 'an applied run keeps the changes card')
+  assert.match(textOf(card), /Применено/)
+  const block = findByClass(opened, 'dsh-artel-install')
+  assert.ok(block !== undefined, 'the install block is rendered under the applied plate')
+  assert.match(textOf(block), /Этот проект — бандл DSH/)
+  assert.match(textOf(block), /@local\/pybrowser-mcp/)
+  assert.match(textOf(block), /python install\/install\.py/)
+  assert.equal(
+    state.realm.calls.some((call) => call.pathname === '/api/dsh-artel/runs/run-applied/install' && call.method === 'GET'),
+    false,
+    'a stored install record is not re-read',
+  )
+
+  findButton(block, 'Установить в DSH').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+  assert.ok(
+    state.realm.calls.some((call) => call.pathname === '/api/dsh-artel/runs/run-applied/install/bundle' && call.method === 'POST'),
+    'the button installs the project folder',
+  )
+  assert.match(textOf(findByClass(opened, 'dsh-artel-install')), /перезапустите DSH/)
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('install steps run one at a time and show their output', async () => {
+  const done = {
+    ...INSTALL_RECORD,
+    steps: [{
+      ...INSTALL_STEP,
+      status: 'done',
+      exitCode: 0,
+      output: 'runtime installed to C:\\Users\\dev\\.pybrowser\\runtime',
+      startedAt: 1700000000000,
+      finishedAt: 1700000004000,
+    }],
+  }
+  const state = setup({
+    scenario: { project: DEFAULT_PROJECT, runs: [APPLIED_INSTALL_RUN], installAfterStep: done },
+  })
+  const tree = await renderLauncher(state)
+  findByClass(tree, 'dsh-artel-launcher').props.onClick()
+  await state.realm.settle()
+  let opened = await state.realm.renderer.flush()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+
+  const block = findByClass(opened, 'dsh-artel-install')
+  assert.ok(block !== undefined)
+  assert.match(textOf(block), /Шаги установки/)
+  const runButton = findButton(block, 'Запустить')
+  assert.ok(runButton !== undefined, 'a declared step has its own Run button')
+  runButton.props.onClick()
+  opened = await state.realm.renderer.flush()
+  const confirm = findByClass(opened, 'dsh-artel-install__confirm')
+  assert.ok(confirm !== undefined, 'Run asks before it executes the command')
+  assert.match(textOf(confirm), /Запустить эту команду в папке проекта\?/)
+  assert.equal(
+    state.realm.calls.some((call) => call.pathname === '/api/dsh-artel/runs/run-applied/install/steps/0' && call.method === 'POST'),
+    false,
+    'nothing runs before the confirmation',
+  )
+
+  findButton(confirm, 'Запустить').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+  assert.ok(
+    state.realm.calls.some((call) => call.pathname === '/api/dsh-artel/runs/run-applied/install/steps/0' && call.method === 'POST'),
+    'the confirmed step runs exactly one command',
+  )
+  const finished = findByClass(opened, 'dsh-artel-install')
+  assert.match(textOf(finished), /Готово/)
+  assert.match(textOf(finished), /код 0/)
+  const show = findButton(finished, 'Показать вывод')
+  assert.ok(show !== undefined, 'a finished step keeps its output behind a toggle')
+  show.props.onClick()
+  opened = await state.realm.renderer.flush()
+  assert.match(textOf(findByClass(opened, 'dsh-artel-install__output')), /runtime installed to C:\\Users\\dev\\\.pybrowser\\runtime/)
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('an applied run from an older version asks the Host once for its install plan', async () => {
+  const oldRun = { ...APPLIED_INSTALL_RUN, install: null }
+  const state = setup({
+    scenario: { project: DEFAULT_PROJECT, runs: [oldRun], install: INSTALL_RECORD },
+  })
+  const tree = await renderLauncher(state)
+  findByClass(tree, 'dsh-artel-launcher').props.onClick()
+  await state.realm.settle()
+  let opened = await state.realm.renderer.flush()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+
+  const installCalls = state.realm.calls.filter((call) => call.pathname === '/api/dsh-artel/runs/run-applied/install')
+  assert.equal(installCalls.length, 1, 'the card asks for the install plan exactly once')
+  assert.match(installCalls[0].url, /refresh=1/, 'the check re-reads the project')
+  const block = findByClass(opened, 'dsh-artel-install')
+  assert.ok(block !== undefined, 'the run that never stored a record still offers the install block')
+  assert.match(textOf(block), /Установить в DSH/)
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
 test('a tool call row expands onto its arguments and output', async () => {
   const state = setup({
     scenario: {
@@ -1643,8 +1841,8 @@ test('all three dictionaries carry the Conductor and Fusion mode and role labels
       assert.equal(dictionaries[locale]?.[key], expected[locale][key], locale + ' has ' + key)
     }
   }
-  assert.equal(state.report.version, '0.8.3', 'the diagnostics report carries the release version')
-  assert.equal(state.realm.window.__DSH_ARTEL_DEBUG__.version, '0.8.3')
+  assert.equal(state.report.version, '0.9.0', 'the diagnostics report carries the release version')
+  assert.equal(state.realm.window.__DSH_ARTEL_DEBUG__.version, '0.9.0')
 })
 
 test('modeLabel, agentProgress and agentRole know the conductor', () => {

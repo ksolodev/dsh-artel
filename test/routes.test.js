@@ -1,9 +1,22 @@
 import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
 import path from 'node:path'
 import { Readable } from 'node:stream'
 import test from 'node:test'
 
 import { registerArtelRoutes, registerFactoryRoutes, registerQueueRoutes, API_PREFIX } from '../lib/routes.js'
+
+/** The canonical project key the routes compute (realpath, lowercased on Windows). */
+async function projectKeyFor(directory) {
+  const resolved = path.resolve(directory)
+  let canonical = resolved
+  try {
+    canonical = await fs.realpath(resolved)
+  } catch {
+    // the directory may not exist yet; path.resolve is the documented fallback
+  }
+  return process.platform === 'win32' ? canonical.toLowerCase() : canonical
+}
 
 /** Fake Host web server that keeps the routes it was given. */
 function fakeWebServer() {
@@ -76,6 +89,35 @@ function fakeEngine() {
         providers: [{ id: 'test', name: 'Test', models: [{ id: 'fast', name: 'Fast', efforts: [{ id: 'low' }] }] }],
         default: { provider: 'test', model: 'fast', reasoningEffort: 'low' },
       }
+    },
+    async listChats() {
+      calls.push({ method: 'listChats' })
+      return [
+        {
+          sessionId: 'session-2',
+          title: 'Artel · Second task',
+          lastTask: 'Second task',
+          projectPath: 'C:\\work\\app',
+          projectKey: 'c:\\work\\app',
+          runCount: 2,
+          lastRunId: 'fg-2',
+          status: 'finished',
+          mode: 'swarm',
+          updatedAt: 20,
+        },
+        {
+          sessionId: 'session-1',
+          title: 'Artel · Add a settings screen',
+          lastTask: 'Add a settings screen',
+          projectPath: 'C:\\work\\app',
+          projectKey: 'c:\\work\\app',
+          runCount: 1,
+          lastRunId: 'fg-1',
+          status: 'waiting',
+          mode: 'solo',
+          updatedAt: 10,
+        },
+      ]
     },
     async setAgentModel(runId, agentId, model) {
       calls.push({ method: 'setAgentModel', runId, agentId, model })
@@ -175,6 +217,12 @@ async function call(routes, path, options) {
   assert.ok(route, `no route for ${path}`)
   const response = fakeResponse()
   route.handler(requestFor(path, options), response)
+  // Handlers may await a realpath: wait for the response instead of assuming
+  // one macrotask is enough.
+  const deadline = Date.now() + 5000
+  while (response.status === undefined && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1))
+  }
   await new Promise((resolve) => setTimeout(resolve, 0))
   let body
   try {
@@ -203,19 +251,20 @@ function setup(options = {}) {
   return { webServer, engine, resolved, disposers }
 }
 
-test('registers a health route, a model catalog route, a project route, a client-report route and a runs prefix', () => {
+test('registers a health route, a model catalog route, a project route, a chats route, a client-report route and a runs prefix', () => {
   const { webServer, disposers } = setup()
-  assert.equal(webServer.routes.length, 5)
+  assert.equal(webServer.routes.length, 6)
   assert.deepEqual(webServer.routes.map((route) => [route.kind, route.path]), [
     ['exact', `${API_PREFIX}/client-report`],
     ['exact', `${API_PREFIX}/health`],
     ['exact', `${API_PREFIX}/models`],
     ['exact', `${API_PREFIX}/project`],
+    ['exact', `${API_PREFIX}/chats`],
     ['prefix', `${API_PREFIX}/runs`],
   ])
   assert.equal(typeof disposers[0], 'function')
   disposers[0]()
-  assert.equal(webServer.routes.length, 4)
+  assert.equal(webServer.routes.length, 5)
 })
 
 test('the model catalog route answers without a session', async () => {
@@ -401,7 +450,11 @@ test('the project route resolves the session directory and its name', async () =
   })
   const response = await call(webServer.routes, `${API_PREFIX}/project?sessionId=session-1`)
   assert.equal(response.status, 200)
-  assert.deepEqual(response.body, { projectPath: path.resolve(projectDir), name: 'session-project' })
+  assert.deepEqual(response.body, {
+    projectPath: path.resolve(projectDir),
+    name: 'session-project',
+    projectKey: await projectKeyFor(projectDir),
+  })
 })
 
 test('the project route falls back to the profile working directory', async () => {
@@ -412,14 +465,43 @@ test('the project route falls back to the profile working directory', async () =
   })
   const response = await call(webServer.routes, `${API_PREFIX}/project?sessionId=fresh-session`)
   assert.equal(response.status, 200)
-  assert.deepEqual(response.body, { projectPath: path.resolve(fallbackDir), name: 'profile-project' })
+  assert.deepEqual(response.body, {
+    projectPath: path.resolve(fallbackDir),
+    name: 'profile-project',
+    projectKey: await projectKeyFor(fallbackDir),
+  })
 })
 
 test('the project route answers with nulls when no project is known yet', async () => {
   const { webServer } = setup({ resolveProjectPath: async () => undefined })
   const response = await call(webServer.routes, `${API_PREFIX}/project?sessionId=fresh-session`)
   assert.equal(response.status, 200)
-  assert.deepEqual(response.body, { projectPath: null, name: null })
+  assert.deepEqual(response.body, { projectPath: null, name: null, projectKey: null })
+})
+
+test('two spellings of the same project share one key', async () => {
+  const projectDir = path.join(process.cwd(), 'test', '.tmp', 'session-project')
+  const alias = path.join(process.cwd(), 'test', '.tmp', '..', '.tmp', 'session-project')
+  const { webServer } = setup({
+    resolveProjectPath: async (sessionId) => (sessionId === 'session-a' ? projectDir : alias),
+  })
+  const first = await call(webServer.routes, `${API_PREFIX}/project?sessionId=session-a`)
+  const second = await call(webServer.routes, `${API_PREFIX}/project?sessionId=session-b`)
+  assert.equal(first.body.projectKey, second.body.projectKey, 'the rail must not split one project in two')
+})
+
+test('the chats route lists every chat that owns Artel runs', async () => {
+  const { webServer, engine } = setup()
+  const response = await call(webServer.routes, `${API_PREFIX}/chats`)
+  assert.equal(response.status, 200)
+  assert.deepEqual(engine.calls.at(-1), { method: 'listChats' })
+  assert.deepEqual(response.body.chats.map((chat) => chat.sessionId), ['session-2', 'session-1'])
+  assert.equal(response.body.chats[0].runCount, 2)
+  assert.equal(response.body.chats[0].lastRunId, 'fg-2')
+  const wrongMethod = await call(webServer.routes, `${API_PREFIX}/chats`, { method: 'POST' })
+  assert.equal(wrongMethod.status, 405)
+  const foreign = await call(webServer.routes, `${API_PREFIX}/chats`, { remote: '10.0.0.5' })
+  assert.equal(foreign.status, 403)
 })
 
 test('the project route validates the session and stays fenced', async () => {
@@ -616,7 +698,7 @@ function fakeFactoryRunner() {
 test('the queue route requires a session and resolves the project', async () => {
   const queueRunner = fakeQueueRunner()
   const { webServer, resolved } = setup({ queueRunner })
-  assert.equal(webServer.routes.length, 6)
+  assert.equal(webServer.routes.length, 7)
   const missing = await call(webServer.routes, `${API_PREFIX}/queue`)
   assert.equal(missing.status, 400)
   assert.equal(missing.body.code, 'artel/bad-request')
@@ -670,20 +752,12 @@ test('the queue route forwards new tasks to addTasks', async () => {
   assert.equal(noSession.body.code, 'artel/bad-request')
 })
 
-test('the queue route refuses modes it cannot run instead of silently running Solo', async () => {
+test('the queue route refuses a mode it does not know', async () => {
   const queueRunner = fakeQueueRunner()
   const { webServer } = setup({ queueRunner })
 
-  const orchestrator = await call(webServer.routes, `${API_PREFIX}/queue`, {
-    method: 'POST',
-    body: { sessionId: 's1', task: 'Plan the release', mode: 'orchestrator' },
-  })
-  assert.equal(orchestrator.status, 400)
-  assert.equal(orchestrator.body.code, 'queue/mode-unsupported')
-  assert.match(orchestrator.body.error, /Orchestrator is not an auto-queue mode/)
-  assert.match(orchestrator.body.error, /saved version/)
-  assert.equal(queueRunner.calls.length, 0, 'a refused mode never reaches addTasks')
-
+  // The Orchestrator became a queue mode with the branch queue model (0.12),
+  // so the refusal that remains is for a typo rather than a known-but-unsupported mode.
   const unknown = await call(webServer.routes, `${API_PREFIX}/queue`, {
     method: 'POST',
     body: { sessionId: 's1', task: 'Do the thing', mode: 'banana' },
@@ -691,7 +765,7 @@ test('the queue route refuses modes it cannot run instead of silently running So
   assert.equal(unknown.status, 400)
   assert.equal(unknown.body.code, 'queue/mode-unknown')
   assert.match(unknown.body.error, /banana/)
-  assert.match(unknown.body.error, /solo, swarm, conductor, fusion/)
+  assert.match(unknown.body.error, /solo, swarm, conductor, orchestrator, fusion/)
   assert.equal(queueRunner.calls.length, 0, 'an unknown mode never reaches addTasks')
 })
 
@@ -770,7 +844,7 @@ test('the queue route answers 503 when no runner is wired', async () => {
 test('the factory route lists, creates and views boards', async () => {
   const factoryRunner = fakeFactoryRunner()
   const { webServer } = setup({ factoryRunner })
-  assert.equal(webServer.routes.length, 6)
+  assert.equal(webServer.routes.length, 7)
   const list = await call(webServer.routes, `${API_PREFIX}/factory`)
   assert.equal(list.status, 200)
   assert.deepEqual(list.body, { boards: [{ id: 'b-1' }] })

@@ -5,6 +5,7 @@ import path from 'node:path'
 
 import { ArtelEngine, ArtelError } from '../lib/engine.js'
 import { RunStore } from '../lib/run-store.js'
+import { projectKeyOf } from '../lib/project-key.js'
 
 /**
  * A driver that records prompts and lets the test emit agent events by hand, so
@@ -2313,4 +2314,42 @@ test('restoreProjectChats is a no-op without the Workspace bridge', async () => 
     await f.engine.dispose()
     await f.cleanup()
   }
+})
+
+test('listChats groups runs by chat, keeps the newest and names the chat', async () => {
+  const store = {
+    all() {
+      return [
+        { id: 'run-1', sessionId: 'session-task-1', projectPath: 'C:\\work\\app', task: 'Add a screen', status: 'finished', mode: 'solo', taskChat: true, chatTitle: 'Artel · Add a screen', createdAt: 10, updatedAt: 20 },
+        { id: 'run-2', sessionId: 'session-task-1', projectPath: 'C:\\work\\app', task: 'Fix it', status: 'running', mode: 'swarm', taskChat: true, chatTitle: 'Artel · Fix it', createdAt: 30, updatedAt: 40 },
+        { id: 'run-3', sessionId: 'session-9', projectPath: 'C:\\work\\app', task: 'Old chat', status: 'applied', mode: 'solo', taskChat: false, createdAt: 5, updatedAt: 6 },
+        { id: 'run-4', sessionId: 'session-8', projectPath: 'C:\\other', task: 'Elsewhere', status: 'failed', mode: 'solo', taskChat: false, createdAt: 7, updatedAt: 8 },
+        { id: 'run-5', sessionId: 'session-7', projectPath: 'C:\\work\\app', task: 'Legacy task', status: 'finished', mode: 'solo', taskChat: true, createdAt: 1, updatedAt: 2 },
+      ]
+    },
+    async add() {},
+    async patch() {},
+    get() {
+      return null
+    },
+  }
+  const engine = new ArtelEngine({ store, driver: {}, copyRoot: 'C:\\tmp', config: {} })
+  const chats = await engine.listChats()
+
+  assert.deepEqual(chats.map((chat) => chat.sessionId), ['session-task-1', 'session-8', 'session-9', 'session-7'], 'newest chat first')
+  const grouped = chats[0]
+  assert.equal(grouped.runCount, 2, 'two runs of one chat are one row')
+  assert.equal(grouped.lastRunId, 'run-2', 'the newest run wins')
+  assert.equal(grouped.title, 'Artel · Fix it')
+  assert.equal(grouped.status, 'running')
+  assert.equal(grouped.lastTask, 'Fix it')
+  assert.equal(grouped.mode, 'swarm')
+  assert.equal(grouped.updatedAt, 40)
+  assert.equal(grouped.projectKey, await projectKeyOf('C:\\work\\app'))
+
+  const withoutStoredTitle = chats.find((chat) => chat.sessionId === 'session-7')
+  assert.equal(withoutStoredTitle.title, 'Artel · Legacy task', 'a task chat without a stored title is named from its task')
+  const plainChat = chats.find((chat) => chat.sessionId === 'session-9')
+  assert.equal(plainChat.title, null, 'a chat that predates task chats has no invented title')
+  assert.equal(plainChat.lastTask, 'Old chat')
 })

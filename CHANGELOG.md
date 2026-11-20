@@ -4,6 +4,41 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.1] — 2026-11-21
+
+### Added
+
+- **The panel lists every chat of the project that owns Artel runs (issue #11).** Above the run groups
+  the rail now has a **«Чаты проекта»** block: one row per chat of the current project with Artel tasks,
+  carrying the chat title, its last run status, when it last moved and how many tasks it holds. A click
+  switches DSH to that chat with the workspace's `openSession`, and the panel stays open, bound to that
+  chat's latest run — its rail, composer, changes card and Apply/Diff actions are the chosen chat's.
+- **Sidebar badges mark the chats that own Artel tasks (issue #11).** A new
+  `sidebar.session.row.trailing` entry renders a compact Artel badge with the task count on every chat
+  that has runs, with the tooltip «N задач Артели · последний статус». Chats without tasks are
+  untouched, and the badge needs neither the panel to be open nor the chat to be current.
+- `GET /api/dsh-artel/chats` returns one record per chat with runs — `sessionId`, `title`, `lastTask`,
+  `projectPath`, `projectKey`, `runCount`, `lastRunId`, `status`, `mode`, `updatedAt` — grouped in the
+  engine by `sessionId`, newest run first. `projectKey` is the real path of the project
+  (`fs.realpath`, lowercased on Windows), so the same project reached through another spelling or a
+  junction keeps its chats together; `GET /project` returns the same key.
+- The run record and `RunSummary` carry `chatTitle` — the title the host gave the task chat at
+  creation — so the chat list keeps a readable name before the live session snapshot is loaded.
+
+### Changed
+
+- The rail's empty state now waits for both the chat list and the run list, so a project chat with
+  runs no longer looks like an empty panel for a moment.
+- Switching to another project chat from the rail reuses the per-chat store: the target chat opens
+  with its latest run selected, and the panel closes again if DSH cannot perform the switch (for
+  example, no workspace service).
+- Locales ru/en/zh gained the chat-block and badge strings; the Russian count follows the 1/2–4/5+
+  rule.
+
+### Fixed
+
+- Chats of one project no longer split into two groups when the project is reached by different paths.
+
 ## [0.11.0] — 2026-11-21
 
 ### Added

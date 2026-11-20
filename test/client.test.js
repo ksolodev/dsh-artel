@@ -273,7 +273,7 @@ function pickOption(tree, value) {
 
 /* ------------------------------------------------------------------ realm */
 
-const DEFAULT_PROJECT = { projectPath: 'C:\\work\\artel-toy', name: 'artel-toy' }
+const DEFAULT_PROJECT = { projectPath: 'C:\\work\\artel-toy', name: 'artel-toy', projectKey: 'c:\\work\\artel-toy' }
 const DEFAULT_RUN = {
   id: 'run-1',
   sessionId: 'sess-1',
@@ -583,6 +583,8 @@ function createRealm(options = {}) {
       if (result !== undefined) return result
     }
     if (pathname === '/api/dsh-artel/project') return json(scenario.project ?? DEFAULT_PROJECT)
+    // Issue #11: the project-chat index used by the rail block and the badge.
+    if (pathname === '/api/dsh-artel/chats') return json({ chats: scenario.chats ?? [] })
     if (pathname === '/api/dsh-artel/models') {
       return json(scenario.models ?? {
         providers: [{
@@ -873,7 +875,15 @@ test('plugin registers one conversation.input.left entry and diagnostics', async
   assert.deepEqual(entry.definition.inject('sess-1'), { sessionId: 'sess-1' })
 
   const slotNames = state.slots.injections.map((injection) => injection.slotName)
-  assert.deepEqual(slotNames, ['conversation.input.left'])
+  assert.deepEqual(slotNames, ['conversation.input.left', 'sidebar.session.row.trailing'])
+  const badgeEntry = state.slots.entries.find((candidate) => candidate.definition.name === 'sidebar.session.row.trailing')
+  assert.ok(badgeEntry !== undefined, 'the sidebar chat-row badge is registered')
+  assert.deepEqual(badgeEntry.definition, {
+    name: 'sidebar.session.row.trailing',
+    id: 'artel-chat-badge',
+    order: 60,
+    locale: 'dsh-artel',
+  })
   assert.equal(state.slots.entries.some((candidate) => candidate.definition.name === 'conversation.composer.dock'), false)
   assert.equal(state.slots.entries.some((candidate) => String(candidate.definition.id).includes('sidebarRightTabs')), false)
 
@@ -887,6 +897,9 @@ test('plugin registers one conversation.input.left entry and diagnostics', async
   assert.match(launcherCss, /\.dsh-artel-launcher \{[^}]*border: 1px solid rgba\(124, 108, 255, 0\.32\)/, 'the launcher paints the Artel chip instead of a bare glyph')
   assert.match(launcherCss, /\.dsh-artel-launcher \{[^}]*linear-gradient\(180deg, rgba\(124, 108, 255, 0\.24\)/, 'the chip carries the brand fill')
   assert.match(launcherCss, /\.dsh-artel-launcher__label/, 'the chip names itself next to the mark')
+  assert.match(launcherCss, /\.dsh-artel-chats__title/, 'the rail paints the project-chat block')
+  assert.match(launcherCss, /\.dsh-artel-badge \{/, 'the sidebar badge has its own pill')
+  assert.match(launcherCss, /\.dsh-artel-row__count/, 'a chat with several runs shows its count')
   assert.match(launcherCss, /@container \(max-width: 460px\)/, 'a narrow row keeps only the mark')
   assert.doesNotMatch(launcherCss, /\.dsh-artel-launcher[^{]*\.dsh-artel-spin/, 'no spinner ring is ever attached to the launcher')
   assert.doesNotMatch(state.realm.styleElements[0].textContent, /dsh-artel-model-pick::after/, 'the chip paints no second chevron')
@@ -911,6 +924,136 @@ test('plugin registers one conversation.input.left entry and diagnostics', async
   assert.ok(reportCall !== undefined, 'client-report was sent')
   assert.equal(state.realm.window.__DSH_ARTEL_CLIENT__.stage, 'ready')
   assert.ok(state.realm.window.__DSH_ARTEL_DEBUG__ !== undefined)
+})
+
+test('project chat helpers group, pluralize and title rows', () => {
+  const realm = createRealm()
+  const plugin = realm.load()
+  plugin.apply(createCtx(realm).ctx)
+  const debug = realm.window.__DSH_ARTEL_DEBUG__
+  const ru = debug.dictionaries.ru
+  const t = (key) => (ru[key] !== undefined ? ru[key] : key)
+
+  const chats = debug.normalizeChats({
+    chats: [
+      { sessionId: 'sess-b', title: 'B', projectKey: 'c:\\p', runCount: 2, lastRunId: 'run-b', status: 'running', updatedAt: 20 },
+      { sessionId: 'sess-a', title: 'A', projectKey: 'c:\\p', runCount: 5, lastRunId: 'run-a', status: 'finished', updatedAt: 30 },
+      { sessionId: '', title: 'broken' },
+      { title: 'no session' },
+    ],
+  })
+  assert.deepEqual(chats.map((chat) => chat.sessionId), ['sess-a', 'sess-b'], 'newest chat first, broken rows dropped')
+  assert.equal(chats[0].runCount, 5)
+  assert.equal(chats[1].lastRunId, 'run-b')
+
+  assert.deepEqual(debug.chatsOfProject(chats, 'c:\\p').map((chat) => chat.sessionId), ['sess-a', 'sess-b'])
+  assert.deepEqual(debug.chatsOfProject(chats, undefined), [], 'without a project key nothing from another project leaks in')
+  assert.deepEqual(debug.chatsOfProject(chats, 'c:\\other'), [])
+
+  assert.equal(debug.chatTitleOf({ title: 'Artel · Add a button' }), 'Artel · Add a button')
+  assert.equal(debug.chatTitleOf({ lastTask: 'Add a button' }), 'Add a button')
+  assert.equal(debug.chatTitleOf({ sessionId: 'session-42' }), 'session-42')
+
+  assert.equal(debug.chatTasksLabel(t, 1), '1 задача Артели')
+  assert.equal(debug.chatTasksLabel(t, 3), '3 задачи Артели')
+  assert.equal(debug.chatTasksLabel(t, 5), '5 задач Артели')
+  assert.equal(debug.chatTasksLabel(t, 11), '11 задач Артели')
+  assert.equal(debug.chatTasksLabel(t, 21), '21 задача Артели')
+  assert.equal(debug.chatTasksLabel(t, 22), '22 задачи Артели')
+  assert.equal(debug.chatBadgeLabel(t, { runCount: 3, status: 'finished' }), '3 задачи Артели · последний статус: Готово')
+
+  for (const locale of ['en', 'ru', 'zh']) {
+    const table = debug.dictionaries[locale]
+    for (const key of ['chats.title', 'chats.hint', 'chats.open', 'chats.tasksOne', 'chats.tasksFew', 'chats.tasksMany', 'chats.badge']) {
+      assert.equal(typeof table[key], 'string', locale + ' has ' + key)
+      assert.notEqual(table[key], key, locale + ' translates ' + key)
+    }
+  }
+})
+
+test('the sidebar badge marks only chats that own Artel runs', async () => {
+  const state = setup({
+    scenario: {
+      chats: [
+        { sessionId: 'sess-1', title: 'Artel · Add a button', projectKey: 'c:\\work\\artel-toy', runCount: 3, lastRunId: 'run-1', status: 'running', updatedAt: 300 },
+        { sessionId: 'sess-2', title: 'Artel · Second task', projectKey: 'c:\\work\\artel-toy', runCount: 1, lastRunId: 'run-2', status: 'finished', updatedAt: 200 },
+      ],
+    },
+  })
+  const realm = state.realm
+  const debug = realm.window.__DSH_ARTEL_DEBUG__
+  const t = state.ctx.locale.bind('dsh-artel')
+  await realm.settle()
+  await debug.refreshChatIndex(true)
+
+  const badge = await realm.renderer.mount(debug.ArtelChatBadge, { sessionId: 'sess-1', t })
+  assert.ok(badge !== null && badge !== undefined, 'a chat with runs gets the badge')
+  assert.equal(badge.props.className, 'dsh-artel-badge')
+  assert.equal(badge.props['data-chat-id'], 'sess-1')
+  assert.equal(badge.props['data-status'], 'running')
+  assert.equal(badge.props.title, '3 задачи Артели · последний статус: В работе')
+  assert.equal(badge.props['aria-label'], badge.props.title)
+  assert.match(textOf(findByClass(badge, 'dsh-artel-badge__count')), /\b3\b/)
+
+  const plain = await realm.renderer.mount(debug.ArtelChatBadge, { sessionId: 'sess-9', t })
+  assert.equal(plain, null, 'an ordinary chat keeps its row untouched')
+  const noId = await realm.renderer.mount(debug.ArtelChatBadge, { t })
+  assert.equal(noId, null)
+})
+
+test('the rail lists project chats and switches to the chosen one', async () => {
+  const otherRun = {
+    ...DEFAULT_RUN,
+    id: 'run-2',
+    sessionId: 'sess-2',
+    task: 'Second task',
+    status: 'finished',
+    updatedAt: '2026-01-01T12:00:00.000Z',
+  }
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [DEFAULT_RUN, otherRun],
+      chats: [
+        { sessionId: 'sess-1', title: 'Artel · Add a button', projectKey: DEFAULT_PROJECT.projectKey, runCount: 1, lastRunId: 'run-1', status: 'running', updatedAt: 100 },
+        { sessionId: 'sess-2', title: 'Artel · Second task', projectKey: DEFAULT_PROJECT.projectKey, runCount: 2, lastRunId: 'run-2', status: 'finished', updatedAt: 200 },
+        { sessionId: 'sess-foreign', title: 'Other project', projectKey: 'c:\\work\\elsewhere', runCount: 1, lastRunId: 'run-x', status: 'running', updatedAt: 300 },
+      ],
+    },
+  })
+  const realm = state.realm
+  const debug = realm.window.__DSH_ARTEL_DEBUG__
+  const opened = []
+  debug.installSessionOpener({ openSession: (sessionId) => { opened.push(sessionId) } })
+
+  const tree = await renderLauncher(state, { sessionCwd: DEFAULT_PROJECT.projectPath })
+  findByClass(tree, 'dsh-artel-launcher').props.onClick()
+  await realm.settle()
+  const view = await realm.renderer.flush()
+
+  const block = findByClass(view, 'dsh-artel-chats')
+  assert.ok(block !== undefined, 'the rail block lists chats of the open project')
+  assert.match(textOf(findByClass(block, 'dsh-artel-chats__title')), /Чаты проекта · 2/)
+  const rows = findAll(block, (node) => node.props?.className === 'dsh-artel-row dsh-artel-row--chat')
+  assert.equal(rows.length, 2, 'a chat from another project is not offered')
+  assert.deepEqual(rows.map((row) => row.props['data-chat-id']), ['sess-2', 'sess-1'], 'newest chat first')
+  assert.equal(rows[0].props['data-active'], 'false')
+  assert.equal(rows[1].props['data-active'], 'true', 'the open chat is marked')
+  assert.match(textOf(rows[0]), /Artel · Second task/)
+  assert.match(textOf(rows[0]), /Готово/)
+  assert.match(textOf(findByClass(rows[0], 'dsh-artel-row__count')), /\b2\b/, 'a chat with two runs shows its count')
+
+  rows[0].props.onClick()
+  await realm.settle()
+  await realm.settle()
+
+  assert.deepEqual(opened, ['sess-2'], 'the host was asked to switch chats')
+  assert.equal(realm.localStorage.getItem('dsh-artel:last-run:sess-2'), 'run-2', 'the chosen chat remembers its newest run')
+  const target = debug.getStore('sess-2')
+  assert.equal(target.getSnapshot().open, true, 'the panel is open in the chosen chat')
+  assert.equal(target.getSnapshot().activeRunId, 'run-2')
+  assert.equal(debug.getStore('sess-1').getSnapshot().open, true, 'the panel of the current chat is not torn down')
+  target.dispose()
 })
 
 test('pure view model helpers behave as the design requires', () => {
@@ -1841,8 +1984,8 @@ test('all three dictionaries carry the Conductor and Fusion mode and role labels
       assert.equal(dictionaries[locale]?.[key], expected[locale][key], locale + ' has ' + key)
     }
   }
-  assert.equal(state.report.version, '0.11.0', 'the diagnostics report carries the release version')
-  assert.equal(state.realm.window.__DSH_ARTEL_DEBUG__.version, '0.11.0')
+  assert.equal(state.report.version, '0.11.1', 'the diagnostics report carries the release version')
+  assert.equal(state.realm.window.__DSH_ARTEL_DEBUG__.version, '0.11.1')
 })
 
 test('modeLabel, agentProgress and agentRole know the conductor', () => {

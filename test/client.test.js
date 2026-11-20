@@ -2814,6 +2814,132 @@ test('auto-queue results let the user open, rework or roll back a version', asyn
   state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
 })
 
+test('the run column scrolls the below-feed cards instead of hiding them under the composer (issue #7)', async () => {
+  const resultsQueue = queueFixture({
+    autopilot: false,
+    tasks: [],
+    counts: { total: 4, queued: 0, running: 0, passed: 4, parked: 0, skipped: 0, stopped: 0, done: 4, remaining: 0 },
+    progress: { text: 'Автоочередь идёт · 4 из 4' },
+    results: {
+      at: '2026-01-01T10:00:00.000Z',
+      stopReason: 'empty',
+      stopText: 'Очередь пуста.',
+      startedAt: '2026-01-01T09:00:00.000Z',
+      limit: 20,
+      passed: [
+        { taskId: 'q-1', title: 'Ночная задача', runId: 'run-auto', files: ['src/app.js'], changeCount: 1, check: { ok: true, command: 'npm test' } },
+        { taskId: 'q-2', title: 'Ещё задача', runId: 'run-auto', files: ['src/theme.css'], changeCount: 2, check: { ok: true, command: 'npm test' } },
+      ],
+      parked: [],
+      notTaken: [],
+      stats: { taken: 2, passed: 2, parked: 0 },
+    },
+  })
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [ORCHESTRATOR_RUN],
+      changes: [],
+      route: ({ method, pathname }) => {
+        if (pathname === '/api/dsh-artel/queue' && method === 'GET') return reply(resultsQueue)
+        return undefined
+      },
+    },
+  })
+  const opened = await openArtel(state)
+  const run = findByClass(opened, 'dsh-artel-run')
+  assert.ok(run !== undefined, 'the run page is open')
+  const scroller = findByClass(run, 'dsh-artel-run__scroll')
+  assert.ok(scroller !== undefined, 'the run page has one scrolling column')
+  const below = findByClass(scroller, 'dsh-artel-run__below')
+  assert.ok(below !== undefined, 'the parts, changes and queue cards sit in the scrolling column')
+  for (const className of ['dsh-artel-parts', 'dsh-artel-changes', 'dsh-artel-queue']) {
+    assert.ok(findByClass(below, className) !== undefined, className + ' is reachable by scrolling')
+    assert.equal(findByClass(run, className), findByClass(below, className), className + ' has a single home below the feed')
+  }
+  assert.ok(findByClass(scroller, 'dsh-artel-queue__results') !== undefined, 'the results card is inside the scrolling column too')
+  const composer = findByClass(run, 'dsh-artel-composer')
+  assert.ok(composer !== undefined, 'the composer stays pinned')
+  assert.equal(findByClass(scroller, 'dsh-artel-composer'), undefined, 'the composer is not part of the scrolling area')
+  const children = run.children.filter((node) => node !== null && node !== undefined)
+  assert.equal(children[children.length - 1], composer, 'the composer is the last flex child of the run column')
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('the auto-queue results card collapses to its title and opens again', async () => {
+  const resultsQueue = queueFixture({
+    autopilot: false,
+    tasks: [],
+    counts: { total: 1, queued: 0, running: 0, passed: 1, parked: 0, skipped: 0, stopped: 0, done: 1, remaining: 0 },
+    progress: { text: 'Автоочередь идёт · 1 из 1' },
+    results: {
+      at: '2026-01-01T10:00:00.000Z',
+      stopReason: 'empty',
+      stopText: 'Очередь пуста.',
+      startedAt: '2026-01-01T09:00:00.000Z',
+      limit: 20,
+      passed: [{ taskId: 'q-1', title: 'Ночная задача', runId: 'run-auto', files: ['src/app.js'], changeCount: 1, check: { ok: true, command: 'npm test' } }],
+      parked: [],
+      notTaken: [],
+      stats: { taken: 1, passed: 1, parked: 0 },
+    },
+  })
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [AUTOQUEUE_RUN],
+      changes: [],
+      route: ({ method, pathname }) => {
+        if (pathname === '/api/dsh-artel/queue' && method === 'GET') return reply(resultsQueue)
+        return undefined
+      },
+    },
+  })
+  const opened = await openArtel(state)
+  const results = findByClass(opened, 'dsh-artel-queue__results')
+  assert.ok(results !== undefined, 'the results card is rendered')
+  const toggle = findByClass(results, 'dsh-artel-queue__resultsToggle')
+  assert.ok(toggle !== undefined, 'the results title is a toggle button')
+  assert.equal(toggle.props['aria-expanded'], 'true', 'the results are open by default')
+  assert.ok(findByClass(results, 'dsh-artel-queue__resultsBody') !== undefined, 'the open card renders its body')
+  assert.ok(findButton(results, 'Доработать') !== undefined, 'the version actions are reachable while open')
+  assert.match(textOf(findByClass(results, 'dsh-artel-queue__resultsCount')), /^ 1$|^1$/, 'the badge counts the versions')
+
+  toggle.props.onClick()
+  let collapsed = await state.realm.renderer.flush()
+  let card = findByClass(collapsed, 'dsh-artel-queue__results')
+  assert.ok(card !== undefined, 'the title row stays on screen')
+  assert.match(textOf(card), /Итоги автоочереди/)
+  assert.equal(findByClass(card, 'dsh-artel-queue__resultsToggle').props['aria-expanded'], 'false')
+  assert.equal(findByClass(card, 'dsh-artel-queue__resultsBody'), undefined, 'the body is hidden while collapsed')
+  assert.equal(findButton(card, 'Доработать'), undefined, 'the version actions hide with the body')
+
+  findByClass(card, 'dsh-artel-queue__resultsToggle').props.onClick()
+  collapsed = await state.realm.renderer.flush()
+  card = findByClass(collapsed, 'dsh-artel-queue__results')
+  assert.equal(findByClass(card, 'dsh-artel-queue__resultsToggle').props['aria-expanded'], 'true')
+  assert.ok(findByClass(card, 'dsh-artel-queue__resultsBody') !== undefined, 'the body comes back')
+  assert.ok(findButton(card, 'Доработать') !== undefined, 'the version actions come back')
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('the layout keeps the run column scrollable and the queue strip non-shrinking (issue #7)', async () => {
+  const state = setup({ scenario: { project: DEFAULT_PROJECT, runs: [AUTOQUEUE_RUN], changes: [] } })
+  await openArtel(state)
+  const css = state.realm.styleElements[0].textContent
+  assert.match(css, /\.dsh-artel-run__below\s*\{[^}]*display:\s*flex[^}]*flex-direction:\s*column/, 'the below-feed stack is a column')
+  assert.match(css, /\.dsh-artel-run__below\s*>\s*\.dsh-artel-queue\s*\{[^}]*flex:\s*none/, 'the below-feed cards do not shrink away')
+  assert.match(css, /\.dsh-artel-queue\s*\{[^}]*flex:\s*none/, 'the queue strip no longer shrinks to zero height')
+  assert.match(css, /\.dsh-artel-run__scroll\s*\{[^}]*overflow-y:\s*auto/, 'the run column scrolls')
+  assert.match(css, /\.dsh-artel-models\s*\{[^}]*flex:\s*none/, 'the model bar keeps its height')
+  assert.match(css, /\.dsh-artel-live\s*\{[^}]*flex:\s*none/, 'the live strip keeps its height')
+  assert.match(css, /\.dsh-artel-hero\s*\{[^}]*overflow-y:\s*auto/, 'the hero scrolls when it overflows (issue #7, proposal 4)')
+  assert.doesNotMatch(css, /\.dsh-artel-hero\s*\{[^}]*justify-content:\s*center/, 'the hero no longer clips a tall layout around its center')
+  assert.match(css, /\.dsh-artel-hero::before,\s*\.dsh-artel-hero::after\s*\{[^}]*margin:\s*auto/, 'auto margins center the short hero and collapse when tall')
+  assert.match(css, /\.dsh-artel-queue__resultsToggle\[aria-expanded="false"\]\s*svg\s*\{[^}]*rotate\(-90deg\)/, 'the collapsed results toggle points right')
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
 test('unsaved versions open the queue pre-flight and get saved as versions', async () => {
   const blocked = {
     pendingVersions: [{ runId: 'run-review', title: 'Add a button', status: 'interrupted', changeCount: 2 }],

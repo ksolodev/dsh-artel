@@ -341,3 +341,49 @@ test('apply() lets the fixer converge a merge conflict', async () => {
     await fx.cleanup()
   }
 })
+
+test('merge() creates a merge commit and leaves the source branch untouched', async () => {
+  const fx = await fixture()
+  try {
+    const { branch: main } = await fx.service.createBranch('s1', { name: 'Main' })
+    const { branch: side } = await fx.service.createBranch('s1', { name: 'Side', fromCommit: main.baseCommit })
+    const mainCommit = await commitOnBranch(fx, main, { file: 'README.md', content: '# Main\n', subject: 'Main work' })
+    const sideCommit = await commitOnBranch(fx, side, { file: 'src/app.js', content: 'export const answer = 4\n', subject: 'Side work' })
+
+    const result = await fx.service.merge('s1', { targetBranchId: main.id, sourceBranchId: side.id })
+
+    const git = await fx.service.ensure('s1')
+    const [entry] = await git.log(result.mergeCommit, { max: 1 })
+    assert.deepEqual([...entry.parents].sort(), [mainCommit, sideCommit].sort())
+    assert.equal(await git.ref(main.ref), result.mergeCommit)
+    assert.equal(await git.ref(side.ref), sideCommit)
+    const queue = await fx.store.get('s1')
+    assert.equal(queue.project.head, main.baseCommit)
+  } finally {
+    await fx.cleanup()
+  }
+})
+
+test('merge() lets the fixer resolve a conflict between branches', async () => {
+  const fx = await fixture({
+    assist: async ({ copyPath }) => {
+      await fs.writeFile(path.join(copyPath, 'src/app.js'), 'export const answer = 5\n')
+    },
+  })
+  try {
+    const { branch: main } = await fx.service.createBranch('s1', { name: 'Main' })
+    const { branch: side } = await fx.service.createBranch('s1', { name: 'Side', fromCommit: main.baseCommit })
+    await commitOnBranch(fx, main, { file: 'src/app.js', content: 'export const answer = 2\n', subject: 'Main answer' })
+    await commitOnBranch(fx, side, { file: 'src/app.js', content: 'export const answer = 3\n', subject: 'Side answer' })
+
+    const result = await fx.service.merge('s1', { targetBranchId: main.id, sourceBranchId: side.id })
+
+    assert.equal(fx.engine.calls.assists.length, 1)
+    const git = await fx.service.ensure('s1')
+    const work = path.join(fx.root, 'merged-check')
+    await git.materialize(work, result.mergeCommit)
+    assert.equal(await fs.readFile(path.join(work, 'src/app.js'), 'utf8'), 'export const answer = 5\n')
+  } finally {
+    await fx.cleanup()
+  }
+})

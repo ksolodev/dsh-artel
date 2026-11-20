@@ -34,8 +34,10 @@ All notable changes to this project are documented here. The format follows
 
 - The Artel panel still opens from any chat, but the run page now lives in the run's task chat: the rail
   in the source chat stays empty, the rail in the task chat lists the run.
-- The run record gains `taskChat`, `taskChatWorkspaceId` and `projectChats`; `run.sessionId` now names the
-  task chat. `POST /api/dsh-artel/runs` gained `newChat` (default `true`).
+- The run record gains `taskChat`, `taskChatWorkspaceId`, `projectChats` and `originSessionId`; `run.sessionId`
+  now names the task chat. `POST /api/dsh-artel/runs` gained `newChat` (default `true`).
+- `maxRunsPerSession` is counted by `originSessionId` — the chat the task was started from — so a task chat
+  cannot lift the per-chat run cap into a no-op.
 - Queue runs keep the chat that owns the queue and Factory runs stay chatless, so background work does
   not spawn chats.
 

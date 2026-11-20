@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.1] — 2026-11-21
+
+### Fixed
+
+- The fixer timeout in `engine.assist()` and the turn timeout used while an
+  assembled Orchestrator result is repaired are now referenced timers while the
+  engine waits for the turn. On Node 22 the unreferenced timer let the event
+  loop drain during the awaited turn, so the 0.12.0 suite failed its Node 22 CI
+  job even though the fixer tests passed on newer Node versions.
+
 ## [0.12.0] — 2026-11-21
 
 The auto-queue keeps its history in a git repository owned by the app. One task

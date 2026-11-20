@@ -4,6 +4,45 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-11-20
+
+### Added
+
+- **Fusion mode — one question, several models, one decision.** Three panel models (roles `panelist`)
+  receive the same task at the same moment and answer independently: separate conversations, no peer
+  tools, no shared turns, so no model ever sees another's answer. The panel runs in the `read-only`
+  sandbox and the approval policy is `never`, so a panel model physically cannot edit the copy — the
+  deliberation is about *how* to do the work, and nothing is touched. A separate judge model
+  (role `judge`) merges the three answers into one shared decision: where they converged, where they
+  diverged, what only one of them noticed, and the merged plan. Nobody wins — the strong parts of each
+  answer are kept. The merged decision arrives as a feed **Plan** card, and the status line counts the
+  disputed places reported by the judge (`DISPUTES:` marker).
+- **One model implements the merged decision.** The implementer (role `implementer`) receives the whole
+  decision with the normal work rules, edits the copy and runs the project's checks. From there the run
+  behaves like Solo: the usual diff review, **Apply** and **Discard**. A stopped panelist is skipped and
+  the judge merges the answers that are in; if every panelist stops the run fails before anything is
+  edited; a judge that stops or answers nothing gets one retry, then the run fails; a failed implementer
+  leaves the run waiting with the partial diff.
+- **Five route slots in the new-task form.** In Fusion mode the single model/effort chip is replaced by
+  five slots — Panel 1, Panel 2, Panel 3, Judge, Implementer — each with its own model and reasoning
+  effort picker. The panel is pre-seeded with distinct catalog rows and the judge/implementer start on
+  the profile default; every slot can still be rerouted from the run page before its first turn. The
+  `POST /api/dsh-artel/runs` body accepts `models: { panel?: [Selection, Selection, Selection], judge?:
+  Selection, implementer?: Selection }`, and each selection is validated against the live catalog before
+  the copy is created.
+- **Host plumbing.** `lib/fusion.js` — pure stage names, panel size, `judgeDecision`, `hasDecision` and
+  `fusionFailureNotice` — with `test/fusion.test.js`; the engine runs the panel/judge/working stage
+  machine and only starts the implementer once a decision exists; `driver.createAgent` accepts
+  `sandboxMode`; the host-driver pins the panel and the judge to `read-only`; the feed reuses the
+  existing `plan`/`status`/`error` kinds, so there is no new surface. Fusion needs no subagent stack.
+- **Docs and locale.** README, ARCHITECTURE (Fusion section, stage table, milestone M7), the en/ru/zh
+  guide (a three-act Fusion walkthrough) and the plugin's locale description now cover Fusion; version
+  `0.6.0` in `package.json`, `lib/index.js` and the client bundle.
+
+### Changed
+
+- The mode picker now offers four modes; the conductor round keeps its existing behaviour unchanged.
+
 ## [0.5.0] — 2026-11-20
 
 ### Added

@@ -1,7 +1,7 @@
 {
   "meta": {
     "title": "Artel",
-    "description": "Run a development task in an isolated copy of your project: one agent on its own, three agents sharing one copy and dividing the files first, or a conductor leading the team — the workers propose the shares, the conductor approves the layout and accepts the finished work. Watch the live feed of full agent replies, review the diff line by line, then apply the result or discard it. Pick the provider, model and reasoning effort for the run, and reroute any single agent while it works. Open Artel with the button next to the chat composer.",
+    "description": "Run a development task in an isolated copy of your project: one agent on its own, three agents sharing one copy and dividing the files first, a conductor leading the team — the workers propose the shares, the conductor approves the layout and accepts the finished work — or a Fusion run where three models answer the same question independently, a judge merges their answers into one decision and one model implements it. Watch the live feed of full agent replies, review the diff line by line, then apply the result or discard it. Pick the provider, model and reasoning effort for the run (including a separate route for each Fusion slot), and reroute any single agent while it works. Open Artel with the button next to the chat composer.",
     "detail": "docs/guide.md"
   }
 }

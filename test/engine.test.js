@@ -56,7 +56,7 @@ class FakeDriver {
     return this.peers
   }
 
-  async createAgent({ name, mode, projectPath, copyPath, agentId, parentSessionId, model }) {
+  async createAgent({ name, mode, projectPath, copyPath, agentId, parentSessionId, model, sandboxMode }) {
     const handle = {
       id: agentId,
       kind: 'session',
@@ -67,6 +67,7 @@ class FakeDriver {
       copyPath,
       parentSessionId,
       model,
+      sandboxMode,
       listeners: new Set(),
     }
     this.created.push(handle)
@@ -1074,6 +1075,270 @@ test('message is refused while the conductor is deciding', async () => {
 
     const stopped = await f.engine.interrupt(run.id)
     assert.equal(stopped.status, 'interrupted')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+/* -------------------------------------------------------------------- fusion */
+
+/**
+ * Start a Fusion run with a distinct route for every slot, so the tests can tell
+ * the panel, the judge and the implementer apart by model as well as by name.
+ * @param {object} f - fixture.
+ * @param {object} [extra] - extra start options.
+ * @returns {Promise<object>} the run summary.
+ */
+async function startFusion(f, extra = {}) {
+  const models = {
+    panel: [
+      { provider: 'test', model: 'fast' },
+      { provider: 'test', model: 'slow' },
+      { provider: 'test', model: 'fast' },
+    ],
+    judge: { provider: 'test', model: 'slow' },
+    implementer: { provider: 'test', model: 'fast' },
+    ...(extra.models ?? {}),
+  }
+  const options = { ...extra }
+  delete options.models
+  return f.engine.start({
+    sessionId: 's1',
+    projectPath: f.projectPath,
+    mode: 'fusion',
+    task: 'Pick the approach for the answer change',
+    models,
+    ...options,
+  })
+}
+
+/** Answer every panelist with a distinct short position. */
+async function answerPanel(f) {
+  const [vega, orion, lyra] = f.driver.created
+  await runTurn(f.driver, vega, 'Approach A: change the answer in src/app.js.')
+  await runTurn(f.driver, orion, 'Approach B: add a function and update the test fixture.')
+  await runTurn(f.driver, lyra, 'Approach A, with a README note.')
+}
+
+test('fusion run: panel answers, judge merges, implementer works', async () => {
+  const f = await fixture('fusion')
+  try {
+    const run = await startFusion(f)
+    assert.equal(run.mode, 'fusion')
+    assert.equal(run.status, 'planning')
+    assert.equal(run.agents.length, 5)
+    assert.deepEqual(run.agents.map((agent) => agent.role), ['panelist', 'panelist', 'panelist', 'judge', 'implementer'])
+    assert.ok(run.agents.every((agent) => agent.kind === 'session'))
+    assert.equal(f.driver.created.length, 5)
+    assert.equal(f.driver.members.length, 0)
+    assert.deepEqual(f.driver.created.map((handle) => handle.sandboxMode), ['read-only', 'read-only', 'read-only', 'read-only', undefined])
+    assert.deepEqual(f.driver.created.map((handle) => [handle.name, handle.model?.model ?? null]), [
+      ['Vega', 'fast'],
+      ['Orion', 'slow'],
+      ['Lyra', 'fast'],
+      ['Atlas', 'slow'],
+      ['Nova', 'fast'],
+    ])
+    assert.deepEqual(run.agents.map((agent) => agent.model?.model ?? null), ['fast', 'slow', 'fast', 'slow', 'fast'])
+    assert.equal(f.driver.prompts.length, 3, 'only the panel is prompted at the start')
+    assert.deepEqual(f.driver.prompts.map((entry) => entry.agent), ['Vega', 'Orion', 'Lyra'])
+    assert.match(f.driver.prompts[0].text, /independent models/)
+    const feed = await feedOf(f, run.id)
+    assert.ok(feed.some((event) => event.kind === 'status' && event.text === 'Three models are answering the same question independently. Nothing is edited in this step.'))
+
+    const [vega] = f.driver.created
+    await runTurn(f.driver, vega, 'Approach A: change the answer in src/app.js.')
+    assert.equal(latestRun(f).status, 'planning')
+    assert.equal(f.driver.prompts.filter((entry) => entry.agent === 'Atlas').length, 0, 'the judge waits for every panelist')
+
+    await runTurn(f.driver, f.driver.created[1], 'Approach B: add a function and update the test fixture.')
+    await runTurn(f.driver, f.driver.created[2], 'Approach A, with a README note.')
+    const judgePrompt = f.driver.prompts.find((entry) => entry.agent === 'Atlas')
+    assert.ok(judgePrompt !== undefined)
+    assert.match(judgePrompt.text, /Approach A: change the answer/)
+    assert.match(judgePrompt.text, /Approach B: add a function/)
+    assert.match(judgePrompt.text, /Test\/Fast/)
+    assert.match(judgePrompt.text, /Test\/Slow/)
+    assert.equal(latestRun(f).status, 'planning')
+    assert.ok((await feedOf(f, run.id)).some((event) => event.kind === 'status' && event.text === 'All three answers are in. The judge is merging them into one decision.'))
+
+    await runTurn(f.driver, f.driver.handleFor('Atlas'), '## Merged decision\nChange src/app.js and keep the tests green.\n## Where the answers converged\n- src/app.js\n## Where they diverged\n- tests\n## What only one answer saw\n- README\n## Disputed places\n- test fixture\nDISPUTES: 1')
+    const implementPrompt = f.driver.prompts.find((entry) => entry.agent === 'Nova')
+    assert.ok(implementPrompt !== undefined)
+    assert.match(implementPrompt.text, /## Merged decision/)
+    assert.match(implementPrompt.text, /Change src\/app\.js and keep the tests green\./)
+    assert.ok(!/DISPUTES: 1/.test(implementPrompt.text), 'the marker line never reaches the implementer')
+    assert.equal(latestRun(f).status, 'running')
+    const afterJudge = await feedOf(f, run.id)
+    assert.ok(afterJudge.some((event) => event.kind === 'plan' && /## Merged decision/.test(event.text)))
+    assert.ok(afterJudge.some((event) => event.kind === 'status' && event.text === 'The judge merged 3 answers into one decision. 1 disputed place. Nova is implementing it.'))
+
+    const implementer = f.driver.handleFor('Nova')
+    await f.driver.emit(implementer, { kind: 'tool', tool: 'edit', path: 'src/app.js' })
+    await fs.writeFile(path.join(run.copyPath, 'src', 'app.js'), 'export const answer = 2\n')
+    await runTurn(f.driver, implementer, 'Changed the answer and ran the tests.')
+    const waiting = latestRun(f)
+    assert.equal(waiting.status, 'waiting')
+    assert.equal(waiting.changeCount, 1)
+    assert.equal(waiting.agents[4].status, 'idle')
+    assert.ok((await feedOf(f, run.id)).some((event) => event.kind === 'status' && event.text === 'The implementer is idle. 1 file changed — review the diff and apply what you like.'))
+    assert.equal(await fs.readFile(path.join(f.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 1\n', 'the real project is untouched before apply')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('fusion start validates every slot route before copying', async () => {
+  const f = await fixture('fusion-model')
+  try {
+    await assert.rejects(
+      () => startFusion(f, { models: { panel: [{ provider: 'test', model: 'nope' }] } }),
+      (error) => error instanceof ArtelError && error.code === 'artel/model-unavailable',
+    )
+    assert.deepEqual(f.engine.listRuns('s1'), [])
+    assert.equal(f.driver.created.length, 0)
+    assert.deepEqual(await fs.readdir(f.copyRoot).catch(() => []), [])
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('a stopped panelist is skipped and the judge merges the rest', async () => {
+  const f = await fixture('fusion-panel-failure')
+  try {
+    const run = await startFusion(f)
+    const [vega, orion, lyra] = f.driver.created
+    await runTurn(f.driver, vega, 'Approach A: change src/app.js.')
+    await f.driver.emit(orion, { kind: 'turn-start' })
+    await f.driver.emit(orion, { kind: 'turn-end', reason: { kind: 'error' } })
+    await runTurn(f.driver, lyra, 'Approach C: change src/app.js and the README.')
+
+    const feed = await feedOf(f, run.id)
+    assert.ok(feed.some((event) => event.kind === 'error' && event.text === 'Orion stopped (error). The panel continues without it.'))
+    assert.ok(feed.some((event) => event.kind === 'status' && event.text === '2 of 3 answers are in (a panel model stopped). The judge is merging them into one decision.'))
+    const judgePrompt = f.driver.prompts.find((entry) => entry.agent === 'Atlas')
+    assert.ok(judgePrompt !== undefined)
+    assert.match(judgePrompt.text, /Approach A/)
+    assert.match(judgePrompt.text, /Approach C/)
+    assert.ok(!/Approach B/.test(judgePrompt.text))
+    assert.equal(latestRun(f).agents[1].status, 'failed')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('a single surviving panel answer is merged with singular wording', async () => {
+  const f = await fixture('fusion-panel-one')
+  try {
+    const run = await startFusion(f)
+    const [vega, orion, lyra] = f.driver.created
+    await runTurn(f.driver, vega, 'Approach A: change src/app.js.')
+    await f.driver.emit(orion, { kind: 'turn-start' })
+    await f.driver.emit(orion, { kind: 'turn-end', reason: { kind: 'error' } })
+    await f.driver.emit(lyra, { kind: 'turn-start' })
+    await f.driver.emit(lyra, { kind: 'turn-end', reason: { kind: 'error' } })
+
+    const feed = await feedOf(f, run.id)
+    assert.ok(feed.some((event) => event.kind === 'status' && event.text === '1 of 3 answers is in (a panel model stopped). The judge is merging them into one decision.'))
+    const judgePrompt = f.driver.prompts.find((entry) => entry.agent === 'Atlas')
+    assert.ok(judgePrompt !== undefined)
+    assert.match(judgePrompt.text, /Approach A/)
+    assert.ok(!/Approach B/.test(judgePrompt.text))
+
+    await runTurn(f.driver, f.driver.handleFor('Atlas'), '## Merged decision\nDo A.\nDISPUTES: 0')
+    assert.ok((await feedOf(f, run.id)).some((event) => event.kind === 'status' && event.text === 'The judge merged 1 answer into one decision. None of the answers disagree. Nova is implementing it.'))
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('a fusion run fails when every panelist stops', async () => {
+  const f = await fixture('fusion-panel-dead')
+  try {
+    const run = await startFusion(f)
+    for (const handle of f.driver.created.slice(0, 3)) {
+      await f.driver.emit(handle, { kind: 'turn-start' })
+      await f.driver.emit(handle, { kind: 'turn-end', reason: { kind: 'error' } })
+    }
+    const failed = latestRun(f)
+    assert.equal(failed.status, 'failed')
+    assert.equal(f.store.get(run.id).error, 'Every panel model stopped before answering. Nothing was edited.')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('an empty judge answer is asked once more, then the run continues', async () => {
+  const f = await fixture('fusion-judge')
+  try {
+    const run = await startFusion(f)
+    await answerPanel(f)
+    const atlas = f.driver.handleFor('Atlas')
+    await f.driver.emit(atlas, { kind: 'turn-start' })
+    await f.driver.emit(atlas, { kind: 'turn-end' })
+    assert.ok((await feedOf(f, run.id)).some((event) => event.kind === 'status' && event.text === 'The judge answered nothing. Asking it once more.'))
+    const retries = f.driver.prompts.filter((entry) => entry.agent === 'Atlas')
+    assert.equal(retries.length, 2)
+    assert.match(retries[1].text, /previous answer was empty/)
+    assert.equal(latestRun(f).status, 'planning')
+
+    await runTurn(f.driver, atlas, '## Merged decision\nDo B.\nDISPUTES: 0')
+    assert.equal(latestRun(f).status, 'running')
+    assert.ok((await feedOf(f, run.id)).some((event) => event.kind === 'status' && event.text === 'The judge merged 3 answers into one decision. None of the answers disagree. Nova is implementing it.'))
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('a judge that fails twice fails the fusion run', async () => {
+  const f = await fixture('fusion-judge-failure')
+  try {
+    const run = await startFusion(f)
+    await answerPanel(f)
+    const atlas = f.driver.handleFor('Atlas')
+    await f.driver.emit(atlas, { kind: 'turn-start' })
+    await f.driver.emit(atlas, { kind: 'turn-end', reason: { kind: 'error' } })
+    await f.driver.emit(atlas, { kind: 'turn-start' })
+    await f.driver.emit(atlas, { kind: 'turn-end', reason: { kind: 'error' } })
+    assert.equal(latestRun(f).status, 'failed')
+    assert.equal(f.store.get(run.id).error, 'The judge could not merge the panel answers. Nothing was edited.')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('fusion messages reach only the active stage', async () => {
+  const f = await fixture('fusion-message')
+  try {
+    const run = await startFusion(f)
+    const rows = latestRun(f).agents
+    const rejected = (error) => error instanceof ArtelError && error.status === 409 && error.code === 'artel/planning'
+    await assert.rejects(() => f.engine.message(run.id, { text: 'hello', agentId: rows[4].id }), rejected, 'the implementer waits for the merged decision')
+
+    const before = f.driver.prompts.length
+    const answered = await f.engine.message(run.id, { text: 'Please consider the tests', agentId: rows[0].id })
+    assert.equal(answered.status, 'planning', 'a panel message does not start the work')
+    const prompts = f.driver.prompts.slice(before)
+    assert.equal(prompts.length, 1)
+    assert.equal(prompts[0].agent, 'Vega')
+    assert.match(prompts[0].text, /Please consider the tests/)
+    assert.ok((await feedOf(f, run.id)).some((event) => event.kind === 'user' && event.text === 'Please consider the tests'))
+
+    const broadcastBefore = f.driver.prompts.length
+    const broadcast = await f.engine.message(run.id, { text: 'Show the trade-offs too' })
+    assert.equal(broadcast.status, 'planning', 'a broadcast does not start the work either')
+    const broadcastPrompts = f.driver.prompts.slice(broadcastBefore)
+    assert.deepEqual(broadcastPrompts.map((entry) => entry.agent), ['Vega', 'Orion', 'Lyra'], 'everyone means the panel only')
+    assert.ok(broadcastPrompts.every((entry) => /Show the trade-offs too/.test(entry.text)))
+    assert.equal(latestRun(f).agents[3].name, 'Atlas', 'the judge was not prompted')
   } finally {
     await f.engine.dispose()
     await f.cleanup()

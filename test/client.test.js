@@ -1318,7 +1318,7 @@ test('review run renders the changes card, expands a diff and applies', async ()
 
 /* ------------------------------------------------------- conductor (0.5.0) */
 
-test('all three dictionaries carry the Conductor mode and role labels', () => {
+test('all three dictionaries carry the Conductor and Fusion mode and role labels', () => {
   const state = setup()
   const dictionaries = state.dictionaries['dsh-artel']
   assert.ok(dictionaries !== undefined)
@@ -1326,20 +1326,47 @@ test('all three dictionaries carry the Conductor mode and role labels', () => {
     en: {
       'mode.conductor': 'Conductor',
       'mode.conductor.hint': 'Three agents divide the files; the conductor accepts the work',
+      'mode.fusion': 'Fusion',
+      'mode.fusion.hint': 'Three models answer independently, a judge merges them, one model does the work',
       'role.conductor': 'conductor',
       'role.worker': 'agent',
+      'role.panelist': 'panelist',
+      'role.judge': 'judge',
+      'role.implementer': 'implementer',
+      'hero.fusion.title': 'Fusion routes',
+      'hero.fusion.panel': 'Panel {n}',
+      'hero.fusion.judge': 'Judge',
+      'hero.fusion.implementer': 'Implementer',
     },
     ru: {
       'mode.conductor': 'Conductor',
       'mode.conductor.hint': 'Трое делят файлы, дирижёр принимает работу',
+      'mode.fusion': 'Fusion',
+      'mode.fusion.hint': 'Три модели отвечают независимо, судья сводит ответы, одна модель делает работу',
       'role.conductor': 'дирижёр',
       'role.worker': 'агент',
+      'role.panelist': 'панелист',
+      'role.judge': 'судья',
+      'role.implementer': 'исполнитель',
+      'hero.fusion.title': 'Маршруты Fusion',
+      'hero.fusion.panel': 'Панель {n}',
+      'hero.fusion.judge': 'Судья',
+      'hero.fusion.implementer': 'Исполнитель',
     },
     zh: {
       'mode.conductor': '指挥',
       'mode.conductor.hint': '三个智能体划分文件，指挥验收成果',
+      'mode.fusion': '融合',
+      'mode.fusion.hint': '三个模型独立回答，评审汇总，一个模型执行',
       'role.conductor': '指挥',
       'role.worker': '智能体',
+      'role.panelist': '组员',
+      'role.judge': '评审',
+      'role.implementer': '执行者',
+      'hero.fusion.title': '融合路由',
+      'hero.fusion.panel': '模型 {n}',
+      'hero.fusion.judge': '评审',
+      'hero.fusion.implementer': '执行者',
     },
   }
   for (const locale of Object.keys(expected)) {
@@ -1347,8 +1374,8 @@ test('all three dictionaries carry the Conductor mode and role labels', () => {
       assert.equal(dictionaries[locale]?.[key], expected[locale][key], locale + ' has ' + key)
     }
   }
-  assert.equal(state.report.version, '0.5.0', 'the diagnostics report carries the release version')
-  assert.equal(state.realm.window.__DSH_ARTEL_DEBUG__.version, '0.5.0')
+  assert.equal(state.report.version, '0.6.0', 'the diagnostics report carries the release version')
+  assert.equal(state.realm.window.__DSH_ARTEL_DEBUG__.version, '0.6.0')
 })
 
 test('modeLabel, agentProgress and agentRole know the conductor', () => {
@@ -1364,6 +1391,8 @@ test('modeLabel, agentProgress and agentRole know the conductor', () => {
 
   assert.equal(debug.modeLabel(enT, 'conductor'), 'Conductor')
   assert.equal(debug.modeLabel(zhT, 'conductor'), '指挥')
+  assert.equal(debug.modeLabel(enT, 'fusion'), 'Fusion')
+  assert.equal(debug.modeLabel(zhT, 'fusion'), '融合')
 
   const conductorRun = {
     mode: 'conductor',
@@ -1384,6 +1413,22 @@ test('modeLabel, agentProgress and agentRole know the conductor', () => {
   assert.equal(debug.agentRole(ruT, conductorRun, 'Vega'), 'агент', 'the worker role is translated')
   assert.equal(debug.agentRole(ruT, DEFAULT_RUN, 'Nova'), 'dev', 'a role without a dictionary key stays raw')
   assert.equal(debug.agentRole(ruT, conductorRun, 'Nobody'), 'agent', 'an unknown agent keeps the plain fallback role')
+
+  const fusionRun = {
+    mode: 'fusion',
+    status: 'running',
+    agents: [
+      { id: 'f1', name: 'Vega', role: 'panelist', status: 'idle' },
+      { id: 'f2', name: 'Orion', role: 'panelist', status: 'working' },
+      { id: 'f3', name: 'Atlas', role: 'judge', status: 'idle' },
+      { id: 'f4', name: 'Nova', role: 'implementer', status: 'idle' },
+    ],
+  }
+  assert.deepEqual(debug.agentProgress(fusionRun), { done: 3, total: 4 }, 'every Fusion agent is a share')
+  assert.equal(debug.runMeta(ruT, fusionRun), 'Fusion · 3/4 · В работе')
+  assert.equal(debug.agentRole(ruT, fusionRun, 'Orion'), 'панелист', 'the panelist role is translated')
+  assert.equal(debug.agentRole(ruT, fusionRun, 'Atlas'), 'судья', 'the judge role is translated')
+  assert.equal(debug.agentRole(ruT, fusionRun, 'Nova'), 'исполнитель', 'the implementer role is translated')
 })
 
 test('hero offers the Conductor mode and starts a conductor run', async () => {
@@ -1404,9 +1449,10 @@ test('hero offers the Conductor mode and starts a conductor run', async () => {
   let hero = findByClass(state.realm.renderer.tree(), 'dsh-artel-hero')
   assert.ok(hero !== undefined, 'the hero is shown before a run is selected')
   let options = findAll(findByClass(hero, 'dsh-artel-segmented'), (node) => node.type === 'button' && node.props.role === 'radio')
-  assert.equal(options.length, 3, 'solo, swarm and conductor are the three modes')
-  assert.deepEqual(options.map((option) => option.props.children[0]), ['Solo', 'Swarm', 'Conductor'])
+  assert.equal(options.length, 4, 'solo, swarm, conductor and fusion are the four modes')
+  assert.deepEqual(options.map((option) => option.props.children[0]), ['Solo', 'Swarm', 'Conductor', 'Fusion'])
   assert.equal(options[2].props.title, 'Трое делят файлы, дирижёр принимает работу', 'the option carries its own hint')
+  assert.equal(options[3].props.title, 'Три модели отвечают независимо, судья сводит ответы, одна модель делает работу')
   assert.equal(options[2].props['aria-checked'], false)
   assert.equal(textOf(findByClass(hero, 'dsh-artel-hero__mode-hint')).trim(), 'Один агент, одна копия', 'the hint follows the selected mode')
 
@@ -1438,6 +1484,75 @@ test('hero offers the Conductor mode and starts a conductor run', async () => {
   state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
 })
 
+test('hero shows the five Fusion routes and starts a fusion run', async () => {
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [],
+      nextRunId: 'run-fusion',
+      newRunFeed: [{ seq: 1, at: '2026-01-01T11:00:00Z', kind: 'status', text: 'Three models are answering the same question independently.' }],
+    },
+  })
+  const tree = await renderLauncher(state)
+  findByClass(tree, 'dsh-artel-launcher').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  await state.realm.renderer.flush()
+
+  const heroNow = () => findByClass(state.realm.renderer.tree(), 'dsh-artel-hero')
+  const radios = () => findAll(findByClass(heroNow(), 'dsh-artel-segmented'), (node) => node.type === 'button' && node.props.role === 'radio')
+  const fusionChips = () => findAll(findByClass(heroNow(), 'dsh-artel-hero__fusion'), (node) => typeof node.props.className === 'string' && node.props.className.split(/\s+/).includes('dsh-artel-hero__fusion-pick'))
+
+  assert.ok(findByClass(heroNow(), 'dsh-artel-model-pick') !== undefined, 'solo/swarm keep the single route chip')
+  assert.equal(findByClass(heroNow(), 'dsh-artel-hero__fusion'), undefined)
+
+  radios()[3].props.onClick()
+  await state.realm.renderer.flush()
+  assert.ok(findByClass(heroNow(), 'dsh-artel-hero__fusion') !== undefined, 'Fusion replaces the single route with five slots')
+  const chips = fusionChips()
+  assert.equal(chips.length, 5, 'three panel slots, a judge and an implementer')
+  assert.deepEqual(
+    chips.map((chip) => textOf(findByClass(chip, 'dsh-artel-model-pick__label')).trim()),
+    ['Панель 1', 'Панель 2', 'Панель 3', 'Судья', 'Исполнитель'],
+  )
+
+  // The panel is pre-seeded with distinct catalog rows, judge and implementer with the default.
+  const values = () => fusionChips().map((chip) => pickerTriggers(chip)[0].props['data-value'])
+  assert.deepEqual(values(), ['test/fast', 'test/slow', 'test/fast', 'test/fast', 'test/fast'])
+
+  // Picking another model for the first panel slot leaves the other four slots intact.
+  pickerTriggers(fusionChips()[0])[0].props.onClick()
+  await state.realm.renderer.flush()
+  pickOption(state.realm.renderer.tree(), 'test/slow')
+  await state.realm.renderer.flush()
+  assert.deepEqual(values(), ['test/slow', 'test/slow', 'test/fast', 'test/fast', 'test/fast'])
+
+  const textarea = findAll(heroNow(), (node) => node.type === 'textarea' && node.props.className === 'dsh-artel-hero__textarea')[0]
+  textarea.props.onChange({ target: { value: 'Выберите лучший подход к задаче' } })
+  await state.realm.renderer.flush()
+  findButton(state.realm.renderer.tree(), 'Поехали →').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  await state.realm.renderer.flush()
+
+  const post = state.realm.calls.find((call) => call.pathname === '/api/dsh-artel/runs' && call.method === 'POST')
+  assert.ok(post !== undefined, 'the fusion run start reached the Host')
+  assert.equal(post.body.mode, 'fusion')
+  assert.equal(post.body.task, 'Выберите лучший подход к задаче')
+  assert.deepEqual(post.body.models, {
+    panel: [
+      { provider: 'test', model: 'slow' },
+      { provider: 'test', model: 'slow' },
+      { provider: 'test', model: 'fast', reasoningEffort: 'low' },
+    ],
+    judge: { provider: 'test', model: 'fast', reasoningEffort: 'low' },
+    implementer: { provider: 'test', model: 'fast', reasoningEffort: 'low' },
+  })
+  assert.ok(findByClass(state.realm.renderer.tree(), 'dsh-artel-run') !== undefined, 'the run pane replaces the hero')
+
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
 test('store.startRun normalizes the conductor mode and keeps solo as the default', async () => {
   const state = setup({ scenario: { project: DEFAULT_PROJECT, runs: [], nextRunId: 'run-normalized' } })
   const debug = state.realm.window.__DSH_ARTEL_DEBUG__
@@ -1462,6 +1577,12 @@ test('store.startRun normalizes the conductor mode and keeps solo as the default
   await state.realm.settle()
   assert.equal(posts().length, 3)
   assert.equal(posts()[2].body.mode, 'solo', 'an unknown mode falls back to solo')
+
+  await store.startRun({ task: 'Сведи три ответа', mode: 'fusion', models: { panel: [], judge: null, implementer: null } })
+  await state.realm.settle()
+  assert.equal(posts().length, 4)
+  assert.equal(posts()[3].body.mode, 'fusion', 'the fusion mode is passed through')
+  assert.deepEqual(posts()[3].body.models, { panel: [], judge: null, implementer: null })
 
   store.dispose()
 })

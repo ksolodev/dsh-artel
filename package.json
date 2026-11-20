@@ -1,7 +1,7 @@
 {
   "name": "dsh-artel",
-  "version": "0.5.0",
-  "description": "Run coding agents in a separate copy of your project: Solo, Swarm or Conductor — review the changes, apply them yourself.",
+  "version": "0.6.0",
+  "description": "Run coding agents in a separate copy of your project: Solo, Swarm, Conductor or Fusion — review the changes, apply them yourself.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -49,6 +49,9 @@
     "multi-agent",
     "swarm",
     "conductor",
+    "fusion",
+    "multi-model",
+    "debate",
     "code-review",
     "ai-agents"
   ],

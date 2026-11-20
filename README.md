@@ -58,9 +58,12 @@ must run on the same machine.
    `send_message`/`list_agents`. The first Swarm turn is planning only: the agents divide the files and
    announce who owns what. **Conductor** puts a lead on top of the same team: one conductor Session with
    the workers as its subagent children; the workers propose the shares, the conductor approves them,
-   answers the team without you and accepts the finished copy. The agents run unattended: Artel gives
-   them the approval policy `never` and inherits the sandbox mode of the chat session, so a run never
-   stalls on an approval prompt.
+   answers the team without you and accepts the finished copy. **Fusion** asks three models the same
+   question in parallel and does not let them see each other: each panel model answers independently in
+   read-only mode, a judge model merges the answers into one decision, and a single implementer model
+   then does the work. The agents run unattended: Artel gives them the approval policy `never` and
+   inherits the sandbox mode of the chat session (Fusion panels and judges are pinned to `read-only`), so
+   a run never stalls on an approval prompt.
 3. **Diff** — when every agent goes idle, Artel stops the run and fills the **Changes** card on the run
    page: every changed file with added and removed line counts and a line-by-line diff.
 4. **Apply** — you press **Apply** and confirm. It writes every changed file into the project. Before
@@ -68,7 +71,7 @@ must run on the same machine.
    during the run is reported and the whole apply is refused, so nothing is half-written. **Discard**
    deletes the copy and changes nothing.
 
-## Three ways to run a task
+## Four ways to run a task
 
 **Solo** — one agent does the whole task in its own copy of the project. It reads the code, edits the
 copy, and runs whatever checks it needs. Use it when the task is small and well understood: fix a
@@ -100,11 +103,26 @@ back to the named workers, at most twice. Accepted work waits for you like in th
 Use Conductor when the shares are easy to mix up and the whole result must be verified before it
 reaches you. It needs the subagent stack in the DSH profile; there is no independent-session fallback.
 
+**Fusion** — three models answer the same question independently. The panel gets the task in the same
+moment and each model answers in its own read-only conversation: no edits, no messages between the
+models, no sight of each other's answers. A separate judge model then reads all three answers and merges
+them into one decision — where they agreed, where they disagreed, what only one of them noticed — and a
+single implementer model receives that merged decision and does the work. The run page shows five route
+pickers (three panel slots, the judge, the implementer), each with its own model and effort; the panel
+and the judge are pinned to the read-only sandbox, so the discussion cannot touch a file. Nothing is
+written to your project until you press **Apply**.
+
+Use Fusion when the choice is the task itself: which approach to take, how something is better done, a
+design question where one model's blind spot is another model's catch. It needs no subagent stack — the
+five agents are ordinary sessions.
+
 **Models** — the new-run form picks the provider, model and reasoning effort from the routes the DSH
-profile actually advertises, and every agent of the run starts on that route. On the run page each
-agent has its own two pickers, so a member can plan on a cheap model and edit with a strong one:
-changing a row reroutes that one agent from its next step (the running step keeps its route), and a
-route the Host cannot reach leaves the agent on the profile default with a warning in the feed.
+profile actually advertises, and every agent of the run starts on that route. In Fusion the form has one
+route per slot: the panel is pre-seeded with distinct catalog rows and the judge and implementer start
+on the profile default. On the run page each agent has its own two pickers, so a member can plan on a
+cheap model and edit with a strong one: changing a row reroutes that one agent from its next step (the
+running step keeps its route), and a route the Host cannot reach leaves the agent on the profile default
+with a warning in the feed.
 
 ## Review and apply
 
@@ -133,16 +151,16 @@ or discard the run, so reviewed copies do not pile up on disk.
 1. Open a chat session that has a project directory.
 2. Click the **Artel** button in the chat composer tool row (next to **+**). While a run in the session
    is active, the button shows a dot.
-3. Pick Solo, Swarm or Conductor, write the task, press **Go →** (or Ctrl+Enter). **Chat** (with a back chevron) or Esc returns to the
+3. Pick Solo, Swarm, Conductor or Fusion, write the task, press **Go →** (or Ctrl+Enter). **Chat** (with a back chevron) or Esc returns to the
    chat; the chat itself is not replaced.
 
 The panel belongs to the chat session: the **Sessions** rail lists every run of the session, grouped by
 project, with the active one highlighted, and **New session** returns to the form. Each agent works in
 the copy as its working directory. The first agent of a Swarm or Conductor run is an ordinary DSH
 session — in a Conductor run that is the conductor — and the other agents are its subagents, live in the
-same agent tree, and are not listed in the sidebar as separate chats. Solo agents are ordinary sessions
-as well, titled `Artel · <agent> — <task>`; archive or delete those sessions when you no longer need
-them.
+same agent tree, and are not listed in the sidebar as separate chats. Solo agents and all five Fusion
+agents are ordinary sessions as well, titled `Artel · <agent> — <task>` (Fusion adds `Fusion · <role>`);
+archive or delete those sessions when you no longer need them.
 
 ## Upgrading from `dsh-forge`
 
@@ -202,9 +220,17 @@ independent-session fallback.
 - In Conductor mode the conductor reviews the whole copy at most twice: a third request for rework is
   turned into an accept with remarks, and the remarks travel with the changes into your hands. Accepting
   a run is not an apply — the changes card shows the diff and only your **Apply** writes the project.
+- In Fusion mode the three panel agents and the judge are pinned to the `read-only` sandbox mode: the
+  panel is a discussion, not work, and it cannot edit the copy even if a model tries. If a panel model
+  stops, the judge merges the answers that are in; if every panel model stops, the run fails before
+  anything is edited. A judge that answers nothing is asked once more, then the run fails. A failed
+  implementer leaves the run waiting with whatever was already written.
+- A Fusion run is five DSH sessions (three panel models, the judge and the implementer), so the session
+  sidebar gets five entries per run. They stay inert after their turn; archive them when you are done.
 - While the conductor is deciding the shares, reviewing the copy or handing a share over, Artel refuses
   new messages from you (the feed says the conductor is deciding); from the next stage writing is
-  possible again.
+  possible again. In Fusion the panel and the judge accept a message only from you and only when they
+  are the active stage — the models still never see each other.
 - If no one claims a file, Artel hands the unclaimed files that sit next to claimed work to the agents
   that claimed nothing, and marks them in the plan as "nobody claimed it" — so nobody idles through a
   run. If the task is small enough for one agent, the other two end up verifying the copy and say so

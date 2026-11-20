@@ -1,11 +1,11 @@
 # dsh-artel — architecture (working plan)
 
-Status: v0.1 shipped; the current tree is v0.5 — in-chat artel since v0.2, Conductor mode added on top
-of Swarm. This is the design and implementation plan, kept for contributors. Where it
-describes an earlier iteration and differs from the shipped code — for example, run copies are plain
-directory copies (not git worktrees) and run state lives under `<DSH_HOME>/artel/<profile>` — the
-README and the source are authoritative. The v0.2 UX/architecture change is specified in
-`docs/artel-in-chat/DESIGN.md`.
+Status: v0.1 shipped; the current tree is v0.6 — in-chat artel since v0.2, Conductor mode added on top
+of Swarm, Fusion mode added on top of the model routing. This is the design and implementation plan,
+kept for contributors. Where it describes an earlier iteration and differs from the shipped code — for
+example, run copies are plain directory copies (not git worktrees) and run state lives under
+`<DSH_HOME>/artel/<profile>` — the README and the source are authoritative. The v0.2 UX/architecture
+change is specified in `docs/artel-in-chat/DESIGN.md`.
 
 ## What it is
 
@@ -14,6 +14,7 @@ A DSH bundle plugin (`dsh-artel`) that turns "develop this in my project" into a
 - **Solo** — 1 agent, its own copy of the project, works end to end. Live feed, user can message it mid-run, only the user's Apply button changes the real project.
 - **Swarm** — 3 agents, ONE shared copy and ONE agent tree (the first agent is the tree root, the other two are its continuable subagents), so they can really message each other with the standard team tools. First turn is planning/ownership only (no edits), then parallel work in disjoint file areas. One combined diff, one Apply.
 - **Conductor** — 1 conductor + `swarmAgentCount` workers (three by default), ONE shared copy and ONE agent tree like Swarm: the conductor is the root Session, the workers are its subagents. The first turn is planning only — the workers propose the shares and the conductor approves or reassigns them, its word is final. While the workers edit in parallel, a worker's question reaches the conductor and is answered without the user, and a failed worker's share is moved to a live worker. When every worker is idle the conductor reviews the whole copy (changed files + the project's checks) against the task and answers `VERDICT: accept` or `VERDICT: rework` with remarks, at most two rework rounds; accepted work still waits for the user's Apply.
+- **Fusion** — the task goes to three panel models at the same moment; each answers independently in a read-only session and never sees the others. A judge model merges the three answers into one decision (agreement, disagreement, what only one answer saw, `DISPUTES:` count), and a single implementer model receives that decision and does the work. Five ordinary Sessions, no subagent stack needed; only the implementer can edit the copy.
 
 The real project is never written by an agent: agents run with cwd = copy. Apply is a user action, in our UI.
 
@@ -44,7 +45,8 @@ plugin's default working directory), resolved by the host (`GET /project`), no p
 ## UX (v0.2)
 
 ### Empty state — hero for a new run
-Title «Новая задача», task textarea («Опишите задачу для агентов…»), mode picker (Solo / Swarm / Conductor with 1 line each),
+Title «Новая задача», task textarea («Опишите задачу для агентов…»), mode picker (Solo / Swarm / Conductor / Fusion with 1 line each;
+in Fusion the single route chip is replaced by five route slots — three panel slots, the judge and the implementer),
 primary button «Поехали →», and the isolated-copy note naming the project. The rail below shows
 previous runs of this session.
 
@@ -61,7 +63,7 @@ previous runs of this session.
   Empty state "no changes yet" (also the swarm phase-1 state).
 - **Actions**: `Apply changes` (primary, confirmation, all or selected files), `Discard run`
   (destructive, confirm). Apply only enabled when there are changes and the run is not running.
-- **Agents** (swarm and conductor): rows with name, claimed files, state; collisions flagged.
+- **Agents** (all modes): rows with name, role, claimed files, state and the two route pickers; collisions flagged.
 
 ### Swarm turn-1 protocol (product requirement: "правок пока нет")
 1. Host creates one copy, creates the team (see **Agents** below), prompts all three with: project description, the task, and the ownership protocol — *"This is turn 1. Do not create, edit or delete any file. You can message the other agents; end your turn with one OWNERSHIP line."*
@@ -74,7 +76,7 @@ previous runs of this session.
 Persisted at `<DSH_HOME>/artel/runs.json` (atomic write, written on every transition; not the source of truth for conversation content — only run bookkeeping, which is allowed by the practices rules since we cannot append custom session events).
 
 ```ts
-type Mode = 'solo' | 'swarm' | 'conductor'
+type Mode = 'solo' | 'swarm' | 'conductor' | 'fusion'
 type RunStatus = 'preparing' | 'planning' | 'running' | 'waiting' | 'finished' | 'failed' | 'interrupted' | 'applied' | 'discarded'
 
 interface RunRecord {
@@ -96,7 +98,8 @@ interface RunRecord {
 interface AgentRecord {
   sessionId: string
   name: string
-  role: 'solo' | 'swarm' | 'conductor' | 'worker' // 'conductor'/'worker' in a Conductor run
+  role: 'solo' | 'swarm' | 'conductor' | 'worker' | 'panelist' | 'judge' | 'implementer'
+                        // 'panelist'/'judge'/'implementer' in a Fusion run
   kind: 'session' | 'member' // ordinary Session or subagent of the lead/conductor
   claimed: string[]
   status: 'starting' | 'planning' | 'working' | 'idle' | 'failed'
@@ -117,6 +120,8 @@ Feed events are kept in memory + appended to `<DSH_HOME>/artel/runs/<id>.jsonl` 
 
 A Conductor run also keeps an in-memory `runtime.stage` (`planning`, `shares`, `working`, `review`, `rework`, `handover`, `accepted`). It is host-side only and never persisted; the persisted status keeps its existing meaning — `planning` during `planning`/`shares`, `running` during `working`/`review`/`rework`/`handover`, `waiting` after an accept. There are no new statuses and no new feed kinds: `plan` carries the share, rework and accept cards, `status` the stage lines, `peer` the agent messages and `error` the failures.
 
+A Fusion run keeps its own in-memory `runtime.stage` (`panel`, `judge`, `working`). It is host-side only too: the run stays `planning` while the panel and the judge deliberate (nothing is edited), turns `running` when the implementer starts, and `waiting` when the implementer's turn ends and the diff is computed. No new statuses or feed kinds: `plan` carries the merged decision card, `status` the stage lines and `error` the failures.
+
 ## Host ⇄ client protocol
 
 Chosen transport: **plugin HTTP routes** (`ctx.webServer`) + `fetch` from the tab body, the pattern already proven by `dsh-config-manager` in this profile. (Typert Remote is the alternative; revisit only if routes turn out to be restricted.)
@@ -128,7 +133,7 @@ All routes under `/api/dsh-artel/**`, JSON, same-origin + the connection's trust
 | GET | `/api/dsh-artel/health` | — | `{ ok, version, ... }` |
 | GET | `/api/dsh-artel/project` | `sessionId` | `{ projectPath, name }` (`projectPath: null` when unresolved) |
 | GET | `/api/dsh-artel/runs` | `sessionId` | `{ runs: RunSummary[] }` |
-| POST | `/api/dsh-artel/runs` | `{ sessionId, projectPath?, mode, task }` | 201 `{ run }` |
+| POST | `/api/dsh-artel/runs` | `{ sessionId, projectPath?, mode, task, model?, models? }` | 201 `{ run }` |
 | GET | `/api/dsh-artel/runs/:id` | `cursor?`, `limit?` | `{ run, feed, cursor }` |
 | POST | `/api/dsh-artel/runs/:id/messages` | `{ text, agentId? }` | `{ ok }` |
 | POST | `/api/dsh-artel/runs/:id/interrupt` | — | `{ ok }` |
@@ -164,6 +169,8 @@ Swarm members are continuable subagents of the lead Session (`ctx.subagents.star
 `delivery:'caller'` keeps member completions out of the lead's model context (the engine learns turn ends from Session events instead). The run page offers "open conversation" for solo agents and the lead only; members have no separate chat.
 
 Conductor runs use the same machinery with a lead that stays for the whole run: the conductor is the ordinary Session (`driver.createAgent`, address `conductor`) and the workers are its subagent children (`driver.spawnMember`, one address per worker), so the team lives in ONE agent tree and `send_message`/`list_agents` work across it. Before a Conductor run creates its copy, the driver checks `supportsPeers()`; a profile without the subagent stack is refused with `artel/peers-required` — unlike Swarm, Conductor has no independent-session fallback.
+
+Fusion runs are five ordinary Sessions and need no subagent stack. The engine creates all five up front with `driver.createAgent` — so the panel, the judge and the implementer can be routed before their first turn — but prompts only the panel. The panel and the judge are created with `sandboxMode: 'read-only'`: the driver writes a `sandbox/mode` event that pins that Session, and because the driver also sets the approval policy to `never`, no escalation is possible, so a panel or judge model physically cannot edit the copy. The implementer keeps the chat session's inherited mode. The five sessions appear in the sidebar as separate chats; they stay inert after their turns.
 
 ### Provider, model and reasoning effort
 
@@ -207,6 +214,53 @@ The host keeps a `runtime.stage` for the run (host-side only, never persisted �
   stage lines; `peer` carries the agent messages; `error` carries worker and conductor failures. Copy,
   diff, apply/discard and model routing are unchanged from Swarm.
 
+## Fusion
+
+Mode `fusion` adds a "one question, several models, one decision" run on top of Solo. The run has five
+agents: `run.agents[0..2]` are panelists (roles `panelist`, names `Vega`, `Orion`, `Lyra`),
+`run.agents[3]` is the judge (`judge`, `Atlas`) and `run.agents[4]` is the implementer (`implementer`,
+`Nova`). Each agent record carries its own `model` selection, taken from the start request:
+
+```ts
+start({ sessionId, projectPath, mode: 'fusion', task, models?: {
+  panel?: [Selection, Selection, Selection],
+  judge?: Selection,
+  implementer?: Selection,
+} })
+```
+
+A selection is the same `{provider, model, reasoningEffort?}` shape the route pickers use. Missing slots
+fall back to the request's `model` (or the profile default when that is absent too); every provided
+selection is normalized and validated against the live catalog before the copy is created, so a bad
+route fails the start with `artel/model-unavailable` and nothing is copied.
+
+The host keeps a `runtime.stage` for the run (host-side only, never persisted — see **Data model**):
+
+| stage | run status | what the host does |
+|---|---|---|
+| `panel` | `planning` | Prompts the three panelists in the same step, each with its own name and the read-only rule. They answer independently and never see each other — no peer tools, no shared turns. Collects each answer's final text verbatim. |
+| `judge` | `planning` | Renders the three answers (verbatim, with the model label) into the judge prompt; the judge merges them into one decision and closes with `DISPUTES: <n>`. A missing answer is retried once. The merged decision becomes a `plan` card. |
+| `working` | `running` | Sends the implementer the full merged decision with the normal Solo work rules; it edits the copy and runs the project's checks. Its idle settle produces the usual diff and `waiting for you`. |
+
+- **Failure handling**: a panelist that stops is skipped — the judge merges the answers that are in; if
+  every panelist stops, the run fails before anything is edited. A judge that stops or answers nothing is
+  asked once more, then the run fails. A failed implementer leaves the run waiting with whatever diff
+  exists — the normal idle-settle path, no special state.
+- **Read-only**: the panelists and the judge are pinned to the `read-only` sandbox mode by the driver;
+  the task is a discussion about *how*, so the run cannot touch the copy until the implementer starts.
+  This is why the stage is host-only: it is a scheduling fact, not a state the user must review.
+- **Markers**: the judge closes its answer with `DISPUTES:`. `lib/fusion.js` is pure — stage names, panel
+  size, `judgeDecision` (splits the merged text from the marker, parses the count, tolerates a missing
+  marker), `hasDecision`, `fusionFailureNotice` — and unit-tested without DSH.
+- **Messages**: while the run is `planning`, `message()` accepts only a message to the agents of the
+  active stage (panelists during `panel`, the judge during `judge`) and never patches the status; a
+  message that targets a finished or not-yet-started role is refused with `artel/planning`. Once the
+  implementer starts, the normal running/waiting message rules apply. `interrupt()` ends the run in
+  `working` — a stopped Fusion run cannot resume the panel.
+- **No new surface**: the existing `plan` kind carries the merged decision card, `status` carries the
+  stage lines and `error` carries the failures. Copy, diff, apply/discard and model routing are
+  unchanged from Solo; the run page already renders one route row per agent.
+
 ## Package layout (no build step)
 
 ```
@@ -215,7 +269,7 @@ dsh-artel/
   cordis.patch.yml        # - insert: [{ id: dsh-artel, name: dsh-artel }]
   lib/index.js            # Host half, plain ESM, export const inject, Config, apply(ctx, config)
   lib/client.js           # window.__ModuleLoader__.load({ id:'dsh-artel', factory(require){...} })
-  lib/*.js                # host modules: run-store.js copy.js diff.js models.js conductor.js routes.js host-driver.js engine.js
+  lib/*.js                # host modules: run-store.js copy.js diff.js models.js conductor.js fusion.js routes.js host-driver.js engine.js
   locale/{en,ru,zh}.json  # meta.title/meta.description + strings
   icon.svg
   README.md, LICENSE
@@ -237,3 +291,4 @@ Server code is plain ESM JavaScript (no TS) so nothing has to be compiled; the c
 4. **M4 Swarm**: 3 agents, planning turn, ownership map, go-ahead, combined diff, collision notices.
 5. **M5 Ship**: ru/zh strings, README + guide doc, unit tests, restart safety, `dshmarket` packaging notes, install + end-to-end verification in the running GUI.
 6. **M6 Conductor**: one conductor + N workers, share proposal/approval, peer Q&A through the conductor, failure handover, whole-copy review with checks, two-round rework cap, accepted work waiting for the user's Apply.
+7. **M7 Fusion**: three independent panel answers, a judge merge with a disputes count, one implementer; read-only panel and judge; five route pickers in the hero form; panelist/judge failure handling; the merged decision as a plan card; accepted work still waiting for the user's Apply.

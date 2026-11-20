@@ -38,8 +38,9 @@ that it works in an isolated copy.
 1. Describe the task in "Describe the task for the agents…": what should come out and
    where it lives in the project. You do not need to prepare any files — the agents find and read
    them.
-2. Pick a mode: **Solo** ("One agent, one copy"), **Swarm** ("Three agents divide the files") or
-   **Conductor** ("Three agents divide the files; the conductor accepts the work").
+2. Pick a mode: **Solo** ("One agent, one copy"), **Swarm** ("Three agents divide the files"),
+   **Conductor** ("Three agents divide the files; the conductor accepts the work") or **Fusion**
+   ("Three models answer independently, a judge merges them, one model does the work").
 3. Press **Go →** (or Ctrl+Enter). While the request is in flight the button reads "Starting…".
 
 Below the form: "Artel works in an isolated copy of the project. Your files stay untouched until you
@@ -60,13 +61,20 @@ started with. The bar is read-only once the run has been applied or discarded. I
 reach an agent, the row keeps the profile default and the feed shows a warning instead of failing
 the run.
 
+In **Fusion** the form replaces the single route chip with five slots — **Panel 1**, **Panel 2**,
+**Panel 3**, **Judge** and **Implementer** — each with its own model and effort picker (the effort
+picker appears when the chosen model offers efforts). The panel starts on distinct catalog rows when
+the profile advertises several models; the judge and the implementer start on the profile default. The
+five routes can still be changed on the run page while the run is alive, before that agent's turn.
+
 ## Starting a run
 
 Artel then:
 
 1. copies the project into a separate directory outside it;
-2. starts one agent (Solo), three (Swarm) or a conductor with its workers (Conductor), all with the
-   copy as their working directory;
+2. starts one agent (Solo), three (Swarm), a conductor with its workers (Conductor) or five Fusion
+   agents — three panel models, the judge and the implementer — all with the copy as their working
+   directory;
 3. hands them the task and a few rules: edit only the copy, never touch the real project, run the
    appropriate checks and finish by explaining what was done.
 
@@ -157,11 +165,44 @@ mode needs the subagent stack in this profile." There is no fallback to independ
 conductor is deciding the shares, reviewing the copy or handing a share over, Artel refuses messages
 with "The conductor is deciding. Wait for the next stage."; from the next stage writing works again.
 
+## Fusion
+
+Fusion is for the question in front of the work: *which* approach to take and *how* it is better done.
+Three models answer the same task independently, a judge merges the answers into one decision, and one
+model implements that decision. The run happens in three acts; the first two edit nothing.
+
+**1. Three answers, no peeking.** The task goes to three panel models at the same moment. Each answers
+in its own conversation — the models cannot see each other's answers and cannot message each other —
+and each is asked for a recommendation: approach, trade-offs, risks, and how to verify it. The panel
+runs in the read-only sandbox, so a panel model physically cannot edit a file: this step is a
+discussion about how to do the work. Nothing is edited, and your project stays untouched.
+
+**2. The judge merges.** When all three answers are in, a separate judge model reads them and builds
+one shared decision: where the answers converged, where they diverged, what only one of them noticed,
+and the merged plan. Nobody wins — the strong parts of each answer are kept. The merged decision appears
+in the feed as a **Plan** card, and the status line counts the disputed places the judge found. If a
+panel model stopped, the judge merges the answers that are in; if the judge itself stops or answers
+nothing, Artel asks it once more and then fails the run.
+
+**3. One model implements.** The implementer receives the merged decision *as a whole* with the normal
+work rules and edits the copy: it reads the project first, makes the smallest coherent change and runs
+the project's checks. From here the run behaves like Solo — the implementer's replies are in the feed,
+you can write to it, and when it goes idle the runs stops.
+
+**The decision is yours.** When the implementer is idle, the run ends **Waiting for you** like the
+other modes. The **Changes** card shows the diff of the copy and only your **Apply** writes it into
+your project. A failed implementer leaves the run waiting with whatever was already written.
+
+The panel and the judge accept your messages only while their stage is active; during the merge the
+run stays in **Planning**, so the other modes' "wait for the next stage" rule applies. Fusion needs no
+subagent stack: all five agents are ordinary sessions, and each one is a separate chat in the session
+sidebar, titled `Artel · Fusion · <role> — <task>`.
+
 ## The run page
 
-The selected run's page opens on the right: the task at the top, the mode tag (**Solo**, **Swarm** or
-**Conductor**), the status, a tag with the number of changed files (once there are any) and a phase line
-— the same short stage description as in the rail.
+The selected run's page opens on the right: the task at the top, the mode tag (**Solo**, **Swarm**,
+**Conductor** or **Fusion**), the status, a tag with the number of changed files (once there are any)
+and a phase line — the same short stage description as in the rail.
 
 Run statuses: **Preparing**, **Planning**, **Working**, **Waiting for you**, **Finished**,
 **Stopped**, **Failed**, **Applied**, **Discarded**.
@@ -180,7 +221,7 @@ it back to work.
 - Tool calls are grouped into compact rows: the tool name and the file path or command.
 - Status rows with a timestamp and a **Plan** card with the split of work. In Conductor mode the
   **Plan** card also carries the conductor's decisions: the handed-out shares, the rework round and the
-  acceptance.
+  acceptance. In Fusion mode it carries the judge's merged decision and the disputed places count.
 - Your messages: a bubble labelled "You → Everyone" or "You → <agent>".
 - Agents talking to each other: the sender's name, an arrow and the message text.
 - **Edit collision** when two agents touched one path; **Error** when an agent's turn failed. Both
@@ -196,7 +237,9 @@ The field at the bottom is "Write to the agents…", with a **Send** button. The
 The message appears in the feed as "You → …" and puts a waiting or stopped run back to work while the
 copy is still neither applied nor discarded. In Conductor mode a message is refused while the conductor
 is deciding the shares, reviewing the copy or handing a share over — the feed says "The conductor is
-deciding. Wait for the next stage." — and writing works again from the next stage.
+deciding. Wait for the next stage." — and writing works again from the next stage. In Fusion mode you
+can message only the agents of the active stage: the panel while it answers, the judge while it merges,
+and the implementer once the work starts.
 
 ## Changes: apply or discard
 

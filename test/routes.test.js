@@ -277,7 +277,25 @@ test('starting a run uses the body project path or resolves it', async () => {
     mode: 'solo',
     task: 'Add a screen',
     model: undefined,
+    models: undefined,
   })
+})
+
+test('a Fusion start passes the per-slot routes through', async () => {
+  const { webServer, engine } = setup()
+  const models = {
+    panel: [{ provider: 'test', model: 'fast' }, { provider: 'test', model: 'slow' }, { provider: 'test', model: 'fast' }],
+    judge: { provider: 'test', model: 'slow' },
+    implementer: { provider: 'test', model: 'fast' },
+  }
+  const response = await call(webServer.routes, `${API_PREFIX}/runs`, {
+    method: 'POST',
+    body: { sessionId: 'session-1', projectPath: 'C:\\work\\app', mode: 'fusion', task: 'Pick an approach', models },
+  })
+  assert.equal(response.status, 201)
+  const request = engine.calls.find((entry) => entry.method === 'start').request
+  assert.equal(request.mode, 'fusion')
+  assert.deepEqual(request.models, models)
 })
 
 test('messages, interrupt, changes, diff, apply and discard answer with their payloads', async () => {

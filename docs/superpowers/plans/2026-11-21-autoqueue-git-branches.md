@@ -19,7 +19,7 @@
 - Apply writes back only added/modified/deleted paths and updates `refs/heads/applied`; it never silently drops drift and never leaves a partially written project.
 - Branch queues use `queue.model === 'branches'`; queues created by 0.10 without that field stay on the legacy path until drained. `localStorage`/`snap` shapes: none of the new fields are persisted outside `stateDir`.
 - Every user-facing string goes into all three dictionaries in `lib/client.js` (en, ru, zh); no string literals in components.
-- Version for this feature: `0.11.0` in `package.json`, `lib/index.js` `version`, `lib/client.js` `CLIENT_VERSION`, tests; `0.12.0` items stay out of this plan.
+- Version for this feature: `0.12.0` in `package.json`, `lib/index.js` `version`, `lib/client.js` `CLIENT_VERSION`, tests; `0.13.0` items stay out of this plan.
 - Run the whole suite before every commit: `node --test test/*.test.js` (Windows PowerShell: same command). Commit after each task.
 
 ## File Structure
@@ -40,7 +40,7 @@ Modify:
 - `lib/routes.js` — branch routes, orchestrator accepted, error mapping.
 - `lib/client.js` — branch chip, picker, results card, branch modal, apply dialog, API calls, CSS, dictionaries.
 - `test/engine.test.js`, `test/queue-runner.test.js`, `test/routes.test.js`, `test/client.test.js` — extended coverage.
-- `package.json`, `lib/index.js`, `CHANGELOG.md`, `ARCHITECTURE.md`, `README.md`, `docs/guide.md`, `docs/guide.ru.md`, `docs/guide.zh.md` — release 0.11.0.
+- `package.json`, `lib/index.js`, `CHANGELOG.md`, `ARCHITECTURE.md`, `README.md`, `docs/guide.md`, `docs/guide.ru.md`, `docs/guide.zh.md` — release 0.12.0.
 
 ---
 
@@ -5073,7 +5073,7 @@ git add lib/client.js test/client.test.js
 git commit -m "feat: show auto-queue branches, commits and apply/merge in the client"
 ```
 
-### Task 17: Docs, changelog and the 0.11.0 release
+### Task 17: Docs, changelog and the 0.12.0 release
 
 **Files:**
 - Modify: `package.json`
@@ -5088,7 +5088,7 @@ git commit -m "feat: show auto-queue branches, commits and apply/merge in the cl
 
 **Interfaces:**
 - Consumes: everything built in Tasks 1–16.
-- Produces: a consistent 0.11.0 version string, changelog, architecture and guides, a tagged release and an updated issue checklist.
+- Produces: a consistent 0.12.0 version string, changelog, architecture and guides, a tagged release and an updated issue checklist.
 
 - [ ] **Step 1: Bump the version everywhere**
 
@@ -5098,14 +5098,14 @@ Run `grep -rn "0\.10\.0" package.json lib test | head -20` and update every real
 git grep -n "0\.10\.0"
 ```
 
-The expected places are `package.json:3` (`"version": "0.10.0"`), the `export const version` in `lib/index.js`, `CLIENT_VERSION` in `lib/client.js`, and the version assertions in `test/client.test.js` (grep for `0.10.0`). Change each to `'0.11.0'` / `"0.11.0"`.
+The expected places are `package.json:3` (as of writing the current version is `0.11.0`, shipped by the parallel project-chats release), the `export const version` in `lib/index.js`, `CLIENT_VERSION` in `lib/client.js`, and the version assertions in `test/client.test.js` (grep for the current version). Re-check the live version before bumping — other agents ship to this repo too — and change each occurrence to `'0.12.0'` / `"0.12.0"`.
 
 - [ ] **Step 2: Write the changelog and fix the section order**
 
 In `CHANGELOG.md`, add a new section at the top:
 
 ```markdown
-## [0.11.0] — 2026-11-21
+## [0.12.0] — 2026-11-21
 
 The auto-queue keeps its history in a git repository owned by the app. One task
 is one commit on a branch; the night shift stops being a single repeated diff.
@@ -5170,17 +5170,17 @@ Expected: PASS. If a version assertion fails, fix the expected string instead of
 
 ```bash
 git add package.json lib/index.js lib/client.js test/client.test.js CHANGELOG.md ARCHITECTURE.md README.md docs/guide.md docs/guide.ru.md docs/guide.zh.md
-git commit -m "dsh-artel 0.11.0: git-backed queue branches and the Orchestrator in the auto-queue"
-git tag v0.11.0
+git commit -m "dsh-artel 0.12.0: git-backed queue branches and the Orchestrator in the auto-queue"
+git tag v0.12.0
 git push origin main
-git push origin v0.11.0
+git push origin v0.12.0
 ```
 
 Expected: the working tree is clean except `no-store/` and any unrelated work in progress; the tag points at the release commit. Never use `git add -A` here — stage only the paths above.
 
 - [ ] **Step 6: Update issue #12 and verify CI**
 
-Fetch a token without printing it and update the checklist in issue #12 (tick the completed lines; leave the 0.12.0 follow-ups unticked):
+Fetch a token without printing it and update the checklist in issue #12 (tick the completed lines; leave the 0.13.0 follow-ups unticked):
 
 ```powershell
 $cred = "protocol=https`nhost=github.com`n`n" | git credential fill

@@ -3,7 +3,7 @@
 - **Status:** draft for review
 - **Date:** 2026-11-21
 - **Baseline:** 0.10.0 (`3d3d354`)
-- **Target:** 0.11.0 (core + branch merge), 0.12.0 (follow-ups)
+- **Target:** 0.12.0 (core + branch merge), 0.13.0 (follow-ups)
 - **Supersedes:** the 0.8.3 queue-mode guard from issue #3 (disabled Orchestrator entry in the queue picker and explicit `queue/mode-unsupported` refusals)
 
 ## 1. Summary
@@ -55,13 +55,13 @@ Two decisions shaped it:
   directory a run edits is materialised at a time. Existing 0.10.0 queues keep working
   through a legacy mode until they are drained.
 
-## 4. Non-goals (0.11.0)
+## 4. Non-goals (0.12.0)
 
-- Exporting queue branches/commits into the user's own git repository (0.12.0).
-- Reverting an already applied change (0.12.0; git history makes it possible later).
+- Exporting queue branches/commits into the user's own git repository (0.13.0).
+- Reverting an already applied change (0.13.0; git history makes it possible later).
 - Tracking the contents of nested git repositories or submodules (they are excluded like
   `node_modules` and documented).
-- Age-based cleanup of old branches/objects (manual delete + disk warnings in 0.11.0).
+- Age-based cleanup of old branches/objects (manual delete + disk warnings in 0.12.0).
 - Per-task branch selection in the queue add row (the current branch is the target).
 - Cross-project branches; one app repository per project directory.
 
@@ -78,8 +78,8 @@ Two decisions shaped it:
 | D7 | Branch graph, merge and details live in an expandable modal; the queue shows only the current branch | Owner's pick: morning work stays in the queue, branch topology does not crowd it |
 | D8 | Manual project edits are uncommitted changes; they are merged, never silently overwritten | Matches how the user works; nothing is lost without showing where |
 | D9 | The git core is an app-owned repository with the project as its work tree | No dependency on the project being a git repo; no `.git` in the project; the user's repo is untouched |
-| D10 | Branch merge ships in 0.11.0, not later | git makes merge a small addition once branches exist |
-| D11 | Two releases: 0.11.0 core + merge, 0.12.0 export/revert/polish | The core is large; the most complex UI can follow real usage |
+| D10 | Branch merge ships in 0.12.0, not later | git makes merge a small addition once branches exist |
+| D11 | Two releases: 0.12.0 core + merge, 0.13.0 export/revert/polish | The core is large; the most complex UI can follow real usage |
 
 ## 6. Architecture
 
@@ -255,7 +255,7 @@ In a temporary worktree materialised at the branch `baseCommit`:
 
 The original branch and its commits are not rewritten; the rebuilt result is what reaches
 the project. If the user wants to keep the rebuild, the branch can be reworked from the
-result (a follow-up action, not part of 0.11.0).
+result (a follow-up action, not part of 0.12.0).
 
 ### 6.8 Branch merge
 
@@ -301,7 +301,7 @@ This primitive is shared by check repair (6.5) and conflict resolution (6.6–6.
 - The 0.9.1 «Итоги автоочереди» results card adapts: passed entries are the current
   branch's commits; «Доработать» starts a new task from that commit; «Откатить» either
   deletes an unapplied branch or applies the branch with that commit unchecked (rebuild).
-  Reverting already-applied changes stays out of 0.11.0.
+  Reverting already-applied changes stays out of 0.12.0.
 - The add-task row is unchanged; the mode picker offers all five modes, Orchestrator
   enabled with no reason line.
 - Drift banner when the project has uncommitted edits: "В проекте есть незафиксированные
@@ -355,8 +355,8 @@ All routes keep the existing prefix and local (no-auth) server model; errors kee
 - Run directories are removed after a commit; a materialisation helper recreates a branch
   tip tree when a new task starts or the modal shows diffs.
 - Disk preflight uses the existing queue disk check; the warning text includes the app
-  repository size (`git count-objects -vH`). No automatic object GC in 0.11.0; a manual
-  "почистить" action can be added in 0.12.0.
+  repository size (`git count-objects -vH`). No automatic object GC in 0.12.0; a manual
+  "почистить" action can be added in 0.13.0.
 - Delete branch: removes the ref and the queue metadata; objects stay until a later gc
   (they may still be referenced by merges).
 - Migration from 0.10.0 queues (model absent):
@@ -409,10 +409,10 @@ All routes keep the existing prefix and local (no-auth) server model; errors kee
 
 ## 12. Rollout
 
-- **0.11.0:** everything in this document; version bumps (`package.json`,
+- **0.12.0:** everything in this document; version bumps (`package.json`,
   `lib/index.js`, `CLIENT_VERSION`), CHANGELOG, ARCHITECTURE, README and the three guides;
   the 0.8.3 guard is removed; issue #3 is referenced as fixed by this design.
-- **0.12.0:** export a branch into the user's own git repository (opt-in), revert/undo an
+- **0.13.0:** export a branch into the user's own git repository (opt-in), revert/undo an
   applied branch from our history, automatic object GC and performance work, graph
   polish, per-task branch selection in the add row.
 
@@ -460,5 +460,5 @@ All routes keep the existing prefix and local (no-auth) server model; errors kee
   projects with a slow check command (proposal: blocking, with an explicit "apply
   anyway").
 - Whether the rebuild result should be written back to the branch as a new commit or only
-  applied to the project (proposed: only applied; "rework from result" is a 0.12.0
+  applied to the project (proposed: only applied; "rework from result" is a 0.13.0
   action).

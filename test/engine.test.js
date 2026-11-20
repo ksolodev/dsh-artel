@@ -6,6 +6,8 @@ import path from 'node:path'
 import { ArtelEngine, ArtelError } from '../lib/engine.js'
 import { RunStore } from '../lib/run-store.js'
 import { projectKeyOf } from '../lib/project-key.js'
+import { ArtelGit } from '../lib/git.js'
+import { hashTree } from '../lib/copy.js'
 
 /**
  * A driver that records prompts and lets the test emit agent events by hand, so
@@ -2352,4 +2354,135 @@ test('listChats groups runs by chat, keeps the newest and names the chat', async
   const plainChat = chats.find((chat) => chat.sessionId === 'session-9')
   assert.equal(plainChat.title, null, 'a chat that predates task chats has no invented title')
   assert.equal(plainChat.lastTask, 'Old chat')
+})
+
+/* -------------------------------------------- isolated branch runs */
+
+test('an isolated seeded run diffs against its seed and refuses a direct apply', async () => {
+  const f = await fixture('isolated')
+  try {
+    const seed = path.join(f.root, 'seed')
+    await fs.cp(f.projectPath, seed, { recursive: true })
+    await fs.writeFile(path.join(seed, 'src', 'app.js'), 'export const answer = 2\n')
+    const seedManifest = await hashTree(seed)
+
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Change the answer', basePath: seed, isolateFromBase: true })
+    assert.equal(run.isolated, true)
+    assert.equal(run.basePath, path.resolve(seed))
+    assert.equal(run.branchId, null)
+    assert.equal(run.parentCommit, null)
+    assert.equal(run.commit, null)
+    // The diff base is the seed, not the real project: the run is one step of a
+    // branch and sees only its own change, not the whole chain up to the project.
+    const stored = f.store.get(run.id)
+    assert.deepEqual(Object.keys(stored.baseHashes).sort(), ['README.md', 'src/app.js'])
+    assert.equal(stored.baseHashes['src/app.js'].hash, seedManifest.files['src/app.js'].hash)
+    assert.notEqual(stored.baseHashes['src/app.js'].hash, (await hashTree(f.projectPath)).files['src/app.js'].hash)
+
+    await fs.writeFile(path.join(run.copyPath, 'src', 'app.js'), 'export const answer = 3\n')
+    const changes = await f.engine.changes(run.id)
+    assert.deepEqual(changes.map((change) => change.path), ['src/app.js'])
+    const refused = (error) => error instanceof ArtelError && error.status === 409 && error.code === 'artel/branch-apply-required'
+    await assert.rejects(() => f.engine.apply(run.id), refused, 'the branch is applied from the queue, never the run')
+    assert.equal(await fs.readFile(path.join(f.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 1\n')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('an isolated run without a base version is refused', async () => {
+  const f = await fixture('isolated-no-seed')
+  try {
+    const refused = (error) => error instanceof ArtelError && error.status === 400 && error.code === 'artel/bad-request'
+    await assert.rejects(
+      () => f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'No seed', isolateFromBase: true }),
+      refused,
+      'an isolated queue run must start from a base version',
+    )
+    assert.deepEqual(f.engine.listRuns('s1'), [], 'no run was recorded')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('a committed run is reviewed through git and refuses apply and discard', async () => {
+  const f = await fixture('committed')
+  try {
+    const git = await ArtelGit.init({ stateDir: f.stateDir, projectPath: f.projectPath })
+    const imported = await git.importProject()
+    f.engine.setGitResolver(async (projectPath) => (path.resolve(projectPath) === path.resolve(f.projectPath) ? git : null))
+
+    const seed = path.join(f.root, 'seed')
+    await fs.cp(f.projectPath, seed, { recursive: true })
+    await fs.writeFile(path.join(seed, 'src', 'app.js'), 'export const answer = 2\n')
+    // A branch task starts from its branch tip, and the tip is a commit: the run
+    // commit is made on top of it, so the review reads seed -> working copy.
+    const seedCommit = await git.commitDir(seed, { parent: imported, message: 'Seed version' })
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Change the answer', basePath: seed, isolateFromBase: true })
+    const handle = f.driver.created[0]
+    await fs.writeFile(path.join(run.copyPath, 'src', 'app.js'), 'export const answer = 3\n')
+    await f.driver.emit(handle, { kind: 'turn-end' })
+    const waiting = f.engine.listRuns('s1')[0]
+    assert.equal(waiting.status, 'waiting')
+
+    const files = await f.engine.changes(run.id)
+    const commit = await git.commitDir(run.copyPath, { parent: seedCommit, message: 'Task: answer to 3' })
+    await f.engine.markCommitted(run.id, { branchId: 'b1', parentCommit: seedCommit, commit, files, changeCount: files.length })
+    const committed = f.engine.listRuns('s1')[0]
+    assert.equal(committed.commit, commit)
+    assert.equal(committed.branchId, 'b1')
+    assert.equal(committed.parentCommit, seedCommit)
+    assert.equal(committed.copyPath, null, 'the commit owns the content now')
+    await assert.rejects(() => fs.stat(run.copyPath))
+    const stored = await f.engine.changes(run.id)
+    assert.deepEqual(stored.map((change) => change.path), ['src/app.js'])
+    assert.deepEqual(stored[0].hunks, [], 'a committed change is reviewed through git, not a copy')
+
+    const diff = await f.engine.fileDiff(run.id, 'src/app.js')
+    assert.match(diff.before, /answer = 2/)
+    assert.match(diff.after, /answer = 3/)
+
+    const refusedApply = (error) => error instanceof ArtelError && error.status === 409 && error.code === 'artel/branch-apply-required'
+    const refusedDiscard = (error) => error instanceof ArtelError && error.status === 409 && error.code === 'artel/commit-owned'
+    await assert.rejects(() => f.engine.apply(run.id), refusedApply, 'the branch is applied from the queue')
+    await assert.rejects(() => f.engine.discard(run.id), refusedDiscard, 'deleting the branch owns the commit')
+
+    await f.engine.markApplied(run.id, { commit })
+    assert.equal(f.engine.listRuns('s1')[0].status, 'applied')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('markApplied refuses a run without a branch commit', async () => {
+  const f = await fixture('mark-applied-uncommitted')
+  try {
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Change the answer' })
+    const refused = (error) => error instanceof ArtelError && error.status === 409 && error.code === 'artel/not-committed'
+    await assert.rejects(() => f.engine.markApplied(run.id), refused)
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('refreshInstall discovers install needs on the project', async () => {
+  const f = await fixture('install')
+  try {
+    await fs.writeFile(path.join(f.projectPath, 'package.json'), JSON.stringify({ name: 'demo', version: '1.0.0', dsh: { bundle: { patch: 'cordis.patch.yml' } } }, null, 2))
+    await fs.writeFile(path.join(f.projectPath, 'cordis.patch.yml'), 'patches: []\n')
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Touch the README' })
+    const install = await f.engine.refreshInstall(run.id)
+    assert.notEqual(install, null)
+    assert.equal(f.store.get(run.id).install, install, 'the discovered record is stored on the run')
+    const view = f.engine.getRun(run.id).install
+    assert.equal(view.bundle.name, 'demo')
+    assert.equal(view.bundle.patch, 'cordis.patch.yml')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
 })

@@ -134,3 +134,94 @@ test('refs read, compare-and-swap and delete', async () => {
   await git.deleteRef('refs/heads/artel/b1')
   assert.equal(await git.ref('refs/heads/artel/b1'), null)
 })
+
+test('importProject snapshots the project and materialize returns a clean copy', async () => {
+  const stateDir = await tempDir('artel-state-')
+  const project = await makeProject()
+  await fs.mkdir(path.join(project, 'node_modules', 'dep'), { recursive: true })
+  await fs.writeFile(path.join(project, 'node_modules', 'dep', 'index.js'), 'x\n')
+  const git = await ArtelGit.init({ stateDir, projectPath: project })
+
+  const commit = await git.importProject()
+  assert.equal(await git.head(), commit)
+  const paths = (await git.tree(commit)).map((entry) => entry.path).sort()
+  assert.deepEqual(paths, ['README.md', 'src/app.js'])
+
+  const dir = await tempDir('artel-snapshot-')
+  await git.materialize(dir, commit)
+  assert.equal(await fs.readFile(path.join(dir, 'src', 'app.js'), 'utf8'), 'export const answer = 1\n')
+  assert.equal(await fs.stat(path.join(dir, '.git')).then(() => true).catch(() => false), false)
+  assert.equal(await fs.stat(path.join(dir, 'node_modules')).then(() => true).catch(() => false), false)
+})
+
+test('commitDir builds a child commit with the given parent', async () => {
+  const stateDir = await tempDir('artel-state-')
+  const project = await makeProject()
+  const git = await ArtelGit.init({ stateDir, projectPath: project })
+  const first = await git.importProject()
+
+  const work = await tempDir('artel-work-')
+  await fs.mkdir(path.join(work, 'src'), { recursive: true })
+  await fs.writeFile(path.join(work, 'src', 'app.js'), 'export const answer = 2\n')
+  const second = await git.commitDir(work, { parent: first, message: 'Task: change answer' })
+
+  assert.notEqual(second, first)
+  const log = await git.log('refs/heads/applied', { max: 1 })
+  assert.equal(log[0].commit, first)
+  const history = await git.revList({ from: null, to: second })
+  assert.deepEqual(history, [first, second])
+})
+
+test('changes, show, blob and log describe commits', async () => {
+  const stateDir = await tempDir('artel-state-')
+  const project = await makeProject()
+  const git = await ArtelGit.init({ stateDir, projectPath: project })
+  const first = await git.importProject()
+  const work = await tempDir('artel-work-')
+  await fs.mkdir(path.join(work, 'src'), { recursive: true })
+  await fs.writeFile(path.join(work, 'README.md'), '# demo\n')
+  await fs.writeFile(path.join(work, 'src', 'app.js'), 'export const answer = 2\n')
+  await fs.writeFile(path.join(work, 'src', 'extra.js'), 'export const extra = true\n')
+  const second = await git.commitDir(work, { parent: first, message: 'Task: change answer' })
+
+  const changes = (await git.changes(first, second)).sort((a, b) => a.path.localeCompare(b.path))
+  assert.deepEqual(changes.map((change) => [change.path, change.status]), [['src/app.js', 'modified'], ['src/extra.js', 'added']])
+  assert.equal(await git.show(second, 'src/app.js'), 'export const answer = 2\n')
+  assert.equal(await git.show(second, 'missing.txt'), null)
+  assert.deepEqual((await git.blob(second, 'src/extra.js')).toString('utf8'), 'export const extra = true\n')
+
+  const log = await git.log(second, { max: 2 })
+  assert.equal(log[0].commit, second)
+  assert.match(log[0].subject, /Task: change answer/)
+  assert.deepEqual(log[1].parents, [])
+})
+
+test('status reports project drift against the applied head', async () => {
+  const stateDir = await tempDir('artel-state-')
+  const project = await makeProject()
+  const git = await ArtelGit.init({ stateDir, projectPath: project })
+  await git.importProject()
+
+  assert.deepEqual(await git.status(), [])
+  await fs.writeFile(path.join(project, 'src', 'app.js'), 'export const answer = 3\n')
+  await fs.writeFile(path.join(project, 'src', 'new.js'), 'export const fresh = true\n')
+  const drift = (await git.status()).sort((a, b) => a.path.localeCompare(b.path))
+  assert.deepEqual(drift, [
+    { path: 'src/app.js', status: 'modified' },
+    { path: 'src/new.js', status: 'untracked' },
+  ])
+})
+
+test('worktrees are linked, removable and prunable', async () => {
+  const stateDir = await tempDir('artel-state-')
+  const project = await makeProject()
+  const git = await ArtelGit.init({ stateDir, projectPath: project })
+  const commit = await git.importProject()
+  const dir = path.join(await tempDir('artel-worktrees-'), 'w1')
+
+  await git.worktreeAdd(dir, commit)
+  assert.equal((await fs.stat(path.join(dir, '.git'))).isFile(), true)
+  await git.worktreeRemove(dir)
+  assert.equal(await fs.stat(dir).then(() => true).catch(() => false), false)
+  await git.pruneWorktrees()
+})

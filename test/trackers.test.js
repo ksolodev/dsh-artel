@@ -6,6 +6,7 @@ import trackers, {
   TRACKER_LABELS,
   parseIssueRef,
   normalizeIssue,
+  readGitHubIssue,
   fetchGitHubIssue,
   listTrackerIssues,
   commentTrackerIssue,
@@ -66,6 +67,7 @@ test('tracker constants match the contract', () => {
     'listTrackerIssues',
     'normalizeIssue',
     'parseIssueRef',
+    'readGitHubIssue',
     'trackerProblems',
   ].sort())
 })
@@ -237,6 +239,82 @@ test('fetchGitHubIssue returns null on every failure path', async () => {
   assert.equal(await fetchGitHubIssue({ ref: null, exec }), null, 'no reference')
   assert.equal(await fetchGitHubIssue({ ref: { number: 0 }, exec }), null, 'invalid number')
   assert.equal(await fetchGitHubIssue({ ref: { number: 12 }, exec: null }), null, 'no exec')
+  assert.equal(calls.length, 0, 'nothing ran for a bad reference')
+})
+
+/* ---------------------------------------------------------- readGitHubIssue */
+
+test('readGitHubIssue returns the issue and no reason on success', async () => {
+  const { exec } = makeExec(() => ({ code: 0, stdout: JSON.stringify({ number: 12, title: 'Fix login', url: 'u' }), stderr: '' }))
+  const read = await readGitHubIssue({ ref: { number: 12, owner: 'o', repo: 'r' }, exec })
+  assert.equal(read.reason, null)
+  assert.equal(read.detail, '')
+  assert.equal(read.issue.externalId, 'gh:o/r#12')
+  assert.equal(read.issue.title, 'Fix login')
+})
+
+test('readGitHubIssue names why a gh lookup failed', async () => {
+  const cases = [
+    ['spawn gh ENOENT', 'gh-missing'],
+    ["'gh' is not recognized as an internal or external command", 'gh-missing'],
+    ['gh: command not found', 'gh-missing'],
+    ['not logged in to any GitHub hosts. Run gh auth login', 'gh-auth'],
+    ['HTTP 401: Bad credentials', 'gh-auth'],
+    ['Could not resolve to a Repository with the name acme/missing.', 'repo-not-found'],
+    ['Could not resolve to an issue or pull request with the number of 12.', 'not-found'],
+    ['HTTP 404: Not Found', 'not-found'],
+    ['dial tcp: i/o timeout', 'unavailable'],
+  ]
+  for (const [stderr, reason] of cases) {
+    const read = await readGitHubIssue({
+      ref: { number: 12, owner: 'acme', repo: 'repo' },
+      exec: async () => ({ code: 1, stdout: '', stderr }),
+    })
+    assert.equal(read.reason, reason, stderr)
+    assert.equal(read.issue, null)
+    assert.ok(read.detail.length > 0, `a detail is kept for ${reason}`)
+  }
+})
+
+test('readGitHubIssue keeps the first stderr line as the detail', async () => {
+  const read = await readGitHubIssue({
+    ref: { number: 12 },
+    exec: async () => ({ code: 1, stdout: '', stderr: '\n  first line  \nsecond line\n' }),
+  })
+  assert.equal(read.reason, 'unavailable')
+  assert.equal(read.detail, 'first line')
+})
+
+test('readGitHubIssue treats unreadable output and a thrown exec as failures', async () => {
+  const garbage = await readGitHubIssue({
+    ref: { number: 12 },
+    exec: async () => ({ code: 0, stdout: 'not json', stderr: '' }),
+  })
+  assert.equal(garbage.reason, 'unreadable')
+  assert.equal(garbage.issue, null)
+
+  const array = await readGitHubIssue({
+    ref: { number: 12 },
+    exec: async () => ({ code: 0, stdout: '[]', stderr: '' }),
+  })
+  assert.equal(array.reason, 'unreadable')
+
+  const thrown = await readGitHubIssue({
+    ref: { number: 12 },
+    exec: async () => {
+      throw new Error('spawn failed')
+    },
+  })
+  assert.equal(thrown.reason, 'unavailable')
+  assert.equal(thrown.detail, 'spawn failed')
+})
+
+test('readGitHubIssue reports a bad reference without running gh', async () => {
+  const { exec, calls } = makeExec(() => ({ code: 0, stdout: '{}', stderr: '' }))
+  assert.equal((await readGitHubIssue({ ref: null, exec })).reason, 'bad-ref')
+  assert.equal((await readGitHubIssue({ ref: { number: 0 }, exec })).reason, 'bad-ref')
+  assert.equal((await readGitHubIssue({ ref: { number: '12x' }, exec })).reason, 'bad-ref')
+  assert.equal((await readGitHubIssue({ ref: { number: 12 }, exec: null })).reason, 'bad-ref')
   assert.equal(calls.length, 0, 'nothing ran for a bad reference')
 })
 

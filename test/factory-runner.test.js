@@ -222,7 +222,7 @@ function makeExec(state) {
     }
     if (command === 'gh') {
       if (args[0] === 'issue') {
-        if (!state.issueOk) return { code: 1, stdout: '', stderr: 'not logged in' }
+        if (!state.issueOk) return { code: 1, stdout: '', stderr: state.issueError ?? 'not logged in' }
         return { code: 0, stdout: JSON.stringify({ number: 12, title: 'Fix the login', body: 'The login button is dead', url: 'https://github.com/acme/repo/issues/12', labels: [] }), stderr: '' }
       }
       if (args[0] === 'pr' && args[1] === 'create') {
@@ -251,7 +251,7 @@ async function fixture(name) {
   await fs.writeFile(path.join(projectPath, 'README.md'), '# Demo\n')
   await fs.mkdir(path.join(stateDir, 'tickets'), { recursive: true })
   await fs.mkdir(copyRoot, { recursive: true })
-  const execState = { calls: [], gitOk: true, commitOk: true, dirty: false, remote: true, pushOk: true, prOk: true, issueOk: true }
+  const execState = { calls: [], gitOk: true, commitOk: true, dirty: false, remote: true, pushOk: true, prOk: true, issueOk: true, issueError: null }
   const engine = new FakeEngine({ copyRoot })
   const store = new TicketStore({ dir: path.join(stateDir, 'tickets') })
   await store.init()
@@ -535,7 +535,30 @@ test('addTicket numbers tickets, rejects duplicates and empty tickets', async ()
   }
 })
 
-test('importGithubIssue reports a failed gh lookup', async () => {
+test('importGithubIssue turns one issue into a ticket exactly once', async () => {
+  const f = await fixture('import-ok')
+  try {
+    const created = await f.runner.createBoard({ projectPath: f.projectPath })
+    const boardId = created.board.id
+    const ticket = await f.runner.importGithubIssue(boardId, 'acme/repo#12')
+    assert.equal(ticket.number, 1)
+    assert.equal(ticket.title, 'Fix the login')
+    assert.equal(ticket.source.kind, 'github')
+    assert.equal(ticket.source.url, 'https://github.com/acme/repo/issues/12')
+    const call = f.execState.calls.find((entry) => entry.command === 'gh' && entry.args[0] === 'issue')
+    assert.ok(call.args.includes('-R'), 'an owner/repo reference is pinned with -R')
+    assert.equal(call.args[call.args.indexOf('-R') + 1], 'acme/repo')
+
+    await assert.rejects(
+      () => f.runner.importGithubIssue(boardId, 'acme/repo#12'),
+      (error) => error instanceof FactoryError && error.status === 409 && error.code === 'factory/duplicate-ticket',
+    )
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('importGithubIssue names the reason a gh lookup failed', async () => {
   const f = await fixture('import')
   try {
     const created = await f.runner.createBoard({ projectPath: f.projectPath })
@@ -545,11 +568,24 @@ test('importGithubIssue reports a failed gh lookup', async () => {
       (error) => error instanceof FactoryError && error.status === 400 && error.code === 'factory/bad-issue-ref',
     )
 
+    const cases = [
+      ['not logged in', 'factory/gh-auth'],
+      ['spawn gh ENOENT', 'factory/gh-missing'],
+      ["'gh' is not recognized as an internal or external command", 'factory/gh-missing'],
+      ['Could not resolve to a Repository with the name acme/missing.', 'factory/repo-not-found'],
+      ['Could not resolve to an issue or pull request with the number of 12.', 'factory/issue-not-found'],
+      ['HTTP 404: Not Found', 'factory/issue-not-found'],
+      ['something went wrong', 'factory/issue-unavailable'],
+    ]
     f.execState.issueOk = false
-    await assert.rejects(
-      () => f.runner.importGithubIssue(boardId, '#12'),
-      (error) => error instanceof FactoryError && error.status === 400 && error.code === 'factory/issue-not-found',
-    )
+    for (const [stderr, code] of cases) {
+      f.execState.issueError = stderr
+      await assert.rejects(
+        () => f.runner.importGithubIssue(boardId, '#12'),
+        (error) => error instanceof FactoryError && error.code === code,
+        stderr,
+      )
+    }
     assert.ok(f.execState.calls.some((call) => call.command === 'gh' && call.args[0] === 'issue' && call.args.includes('12')))
   } finally {
     await f.cleanup()

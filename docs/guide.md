@@ -306,8 +306,10 @@ The board shows seven columns — **Incoming**, **Triage**, **Working**, **Check
 tests, check, review, ready, waiting and done. **Checks** collapses the tests, app check and review stages.
 
 **Incoming.** File a ticket with **Title**, **Description** and **Files and screenshots** (**Attach**),
-add it with **Add the ticket**, or import a GitHub issue with **From a GitHub issue** — `#12`,
-`owner/repo#12` or the issue URL through `gh`, never twice. Trackers (GitHub, GitLab, Jira, Linear) are
+add it with **Add the ticket**, or import a GitHub issue with **From a GitHub issue** — `#12` (the board's
+project repository), `owner/repo#12` or the issue URL, read through an installed and signed-in `gh` and
+never twice. A failed import says why: `gh` is missing or not signed in, the repository or the issue was
+not found. Trackers (GitHub, GitLab, Jira, Linear) are
 polled every five minutes when the board has them, with optional comment back; **Poll trackers now**
 checks at once.
 

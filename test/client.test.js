@@ -1633,8 +1633,8 @@ test('all three dictionaries carry the Conductor and Fusion mode and role labels
       assert.equal(dictionaries[locale]?.[key], expected[locale][key], locale + ' has ' + key)
     }
   }
-  assert.equal(state.report.version, '0.8.0', 'the diagnostics report carries the release version')
-  assert.equal(state.realm.window.__DSH_ARTEL_DEBUG__.version, '0.8.0')
+  assert.equal(state.report.version, '0.8.1', 'the diagnostics report carries the release version')
+  assert.equal(state.realm.window.__DSH_ARTEL_DEBUG__.version, '0.8.1')
 })
 
 test('modeLabel, agentProgress and agentRole know the conductor', () => {
@@ -2292,7 +2292,7 @@ test('all three dictionaries carry the auto-queue and factory strings', () => {
     assert.deepEqual(Object.keys(dictionaries[locale]).sort(), english, locale + ' has every English key')
   }
   const queueAndFactory = english.filter((key) => key.startsWith('queue.') || key.startsWith('factory.'))
-  assert.equal(queueAndFactory.length, 179, 'every queue and factory string is present')
+  assert.equal(queueAndFactory.length, 186, 'every queue and factory string is present')
   const expected = {
     en: {
       'queue.title': 'Waiting',
@@ -2693,5 +2693,67 @@ test('the factory board renders the columns and opens a ticket', async () => {
   assert.equal(saved.template, 'normal')
   assert.equal(saved.enabled, true)
   assert.deepEqual(saved.routes, ['solo', 'swarm', 'fusion', 'orchestrator'])
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('the issue import row is labelled and explains a failed import', async () => {
+  const boards = [FACTORY_BOARD]
+  const importCalls = []
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [],
+      route: ({ method, pathname, body }) => {
+        if (pathname === '/api/dsh-artel/factory' && method === 'GET') return reply({ boards })
+        if (pathname === '/api/dsh-artel/factory/board-1' && method === 'GET') return reply({ boards, board: FACTORY_BOARD, tickets: [FACTORY_TICKET] })
+        if (pathname === '/api/dsh-artel/factory/board-1/import' && method === 'POST') {
+          importCalls.push(body)
+          return reply({ error: 'GitHub CLI не найден: установите `gh` и выполните `gh auth login`.', code: 'factory/gh-missing' }, 400)
+        }
+        if (pathname === '/api/dsh-artel/queue' && method === 'GET') return reply(queueFixture())
+        return undefined
+      },
+    },
+  })
+  let opened = await openArtel(state)
+  const factoryButton = findAll(opened, (node) => node.type === 'button' && String(node.props.className ?? '').includes('dsh-artel-rail__factory'))[0]
+  factoryButton.props.onClick()
+  for (let iteration = 0; iteration < 3; iteration += 1) {
+    await state.realm.settle()
+    opened = await state.realm.renderer.flush()
+  }
+
+  const pane = findByClass(opened, 'dsh-artel-factory')
+  const importBlock = findByClass(pane, 'dsh-artel-factory__import')
+  assert.ok(importBlock !== undefined, 'the import row is grouped into its own block')
+  const importText = textOf(importBlock)
+  assert.match(importText, /Из GitHub issue/, 'the row is titled')
+  assert.match(importText, /#12/, 'the hint explains the bare number form')
+  assert.match(importText, /owner\/repo#12/, 'the hint explains the qualified form')
+  assert.match(importText, /gh/, 'the hint names the gh requirement')
+
+  const input = findAll(importBlock, (node) => node.type === 'input')[0]
+  assert.equal(input.props['aria-label'], 'Из GitHub issue', 'the input is labelled for accessibility')
+  input.props.onChange({ target: { value: '#12' } })
+  opened = await state.realm.renderer.flush()
+  const button = findButton(findByClass(opened, 'dsh-artel-factory__import'), 'Импорт')
+  assert.ok(button !== undefined)
+  assert.equal(button.props.disabled, false, 'a filled reference enables the button')
+  button.props.onClick()
+  for (let iteration = 0; iteration < 3; iteration += 1) {
+    await state.realm.settle()
+    opened = await state.realm.renderer.flush()
+  }
+
+  assert.deepEqual(importCalls, [{ ref: '#12' }], 'the typed reference reached the Host')
+  const alert = findByClass(opened, 'dsh-artel-factory__importError')
+  assert.ok(alert !== undefined, 'a failed import shows an inline error')
+  assert.equal(alert.props.role, 'alert')
+  assert.equal(textOf(alert).trim(), 'GitHub CLI не найден: установите `gh` (https://cli.github.com) и выполните `gh auth login`.')
+  assert.equal(findByClass(opened, 'dsh-artel-banner__text'), undefined, 'the inline error is not duplicated in the banner')
+  const retryInput = findAll(findByClass(opened, 'dsh-artel-factory__import'), (node) => node.type === 'input')[0]
+  retryInput.props.onChange({ target: { value: '#13' } })
+  opened = await state.realm.renderer.flush()
+  assert.equal(findByClass(opened, 'dsh-artel-factory__importError'), undefined, 'editing the reference hides the old error')
   state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
 })

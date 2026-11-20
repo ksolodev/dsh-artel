@@ -220,7 +220,7 @@ exhausted repair rounds, an interrupted ticket, a run with nothing to work on an
 Every step is written to the board and ticket journal.
 
 Tickets come from the **Incoming** field (title, description, files and screenshots), from GitHub issues —
-`#12`, `owner/repo#12` or the issue URL, imported through `gh` and never twice — or from trackers (GitHub,
+`#12`, `owner/repo#12` or the issue URL, imported through an installed and signed-in `gh` and never twice — or from trackers (GitHub,
 GitLab, Jira and Linear are polled every five minutes, with optional comment back); every board belongs to
 one project. Readiness blocks on three things: a git repository, at least one commit in it (the
 Factory diffs against it) and an engine logged in. A test command (or a suggested one), a preview command

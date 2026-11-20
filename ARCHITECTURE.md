@@ -252,6 +252,12 @@ then shows nothing and a direct call gets `503 artel/unavailable`).
 | POST | `/api/dsh-artel/factory/:boardId/tickets/:ticketId/merge` | — | apply the ticket diff into the real project |
 | POST | `/api/dsh-artel/factory/:boardId/import` | `{ ref }` | import a GitHub issue (`#12`, `owner/repo#12` or a URL) |
 
+An import that cannot read the issue fails with a stable code instead of a silent null: `400
+factory/bad-issue-ref`, `400 factory/gh-missing` (`gh` is not installed), `400 factory/gh-auth` (not
+signed in), `404 factory/repo-not-found`, `404 factory/issue-not-found`, `502
+factory/issue-unreadable`, `502 factory/issue-unavailable`; the board renders the reason inline under the
+import field and localizes it by code.
+
 ## Copy, diff, apply
 
 - **Copy**: git repo → detached worktree at `<copyRoot>/<runId>` (`git worktree add --detach`), recorded base commit; non-git → recursive directory copy excluding `node_modules`, `.git`, and the copy root itself.

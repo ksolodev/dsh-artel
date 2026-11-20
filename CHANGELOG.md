@@ -4,6 +4,24 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] — 2026-11-20
+
+### Fixed
+
+- **The GitHub issue import now explains itself.** The row under «Входящие» is titled **Из GitHub issue**,
+  carries a hint for all three accepted forms (`#12` — the board project's own repository, `owner/repo#12`
+  and an issue link — any repository) and names the `gh` requirement instead of leaving an unlabeled field
+  and button. The input is labelled for screen readers and Enter imports.
+- **A failed import says why instead of doing nothing.** `readGitHubIssue` in `lib/trackers.js` classifies a
+  failed `gh issue view` — CLI missing, not signed in, repository missing, issue missing, unreadable output
+  or anything else — and the route answers with a stable code (`factory/gh-missing`, `factory/gh-auth`,
+  `factory/repo-not-found`, `factory/issue-not-found`, `factory/issue-unreadable`,
+  `factory/issue-unavailable`); the board renders the reason inline under the field in the current locale.
+- **The Host error message is no longer lost.** The client read `{ error }` of an error response as the
+  *code*, so every failed request showed only `HTTP 400`; it now reads `{ error, code }` as written by
+  `writeError` and keeps the old shape as a fallback.
+- `dismissError` clears the factory error banners too, so the factory banner's close button works.
+
 ## [0.8.0] — 2026-11-20
 
 ### Added

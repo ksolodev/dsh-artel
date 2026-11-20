@@ -262,6 +262,16 @@ agent with its last step, the time on the current turn and the fill of its conte
 sums the tokens the run has spent. A tool call row with arguments or output is a button: it expands
 onto both, and **Collapse all** closes every open row.
 
+The page is made of blocks, and you control them without leaving the run. The plan card, agent replies,
+tool groups, the **Parts** card, the **Changes** card and the **Queue** strip are all foldable — click a
+header to fold it to one line («ПЛАН · 24 строки», «Олег · 6 строк»), and the fold is remembered per
+chat session, even after a reload. The **Блоки** toolbar above the feed hides a kind of block, folds
+everything (**Свернуть все**), unfolds it back, or switches the whole page to **Компактно**; a long block
+is clamped to a comfortable height with **Показать целиком** and a grip on its bottom edge to resize it,
+and the boundary above the composer can be dragged too. Nothing overlaps: parts, changes and the queue
+live in the same scroll as the feed, the composer stays pinned below it, and the auto-queue results card
+still scrolls itself into view when a shift finishes (issue #8).
+
 ![The run page](docs/artel-in-chat/screens/run.png)
 
 When every agent is idle, Artel stops and waits for you:

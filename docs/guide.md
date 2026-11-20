@@ -401,6 +401,26 @@ it back to work.
 While the feed is empty it says "The agents are getting ready — their messages will appear here.";
 while it loads, "Loading the feed…".
 
+### Blocks: fold, hide and resize
+
+The run page is a column of blocks: the **Plan** card, agent replies, grouped tool calls, the **Parts**
+card, the **Changes** card and the **Queue** strip. Every block header is a button: click it to fold the
+block to one line with a short count — «ПЛАН · 24 строки», «Олег · 6 строк», «Инструментов: 4» — and
+click again to unfold it. The **Блоки** toolbar above the feed keeps the whole page in hand:
+
+- a chip hides or brings back one kind of block — **План**, **Агенты**, **Инструменты**, **Части**,
+  **Изменения**, **Очередь**;
+- **Компактно** folds every block at once, and **Свернуть все** / **Развернуть все** fold or unfold the
+  whole page in one click;
+- the folds, the hidden kinds and the compact switch are remembered per chat session in the browser
+  (`localStorage`, key `dsh-artel:blocks:<session id>`), so a reload keeps the page as you left it.
+
+A long block is clamped to a comfortable height (40vh for the plan and replies, 36vh for the changes
+card, 32vh for the queue strip by default), scrolls inside that frame and offers **Показать целиком** /
+**Свернуть**; the grip on a block's bottom edge drags its height, and so does the handle above the
+composer for the write field. The feed, the parts card, the changes card and the queue strip share one
+scroll region, so the composer never covers them and nothing is painted over the feed (issue #8).
+
 ### Messaging the agents
 
 The field at the bottom is "Write to the agents…", with a **Send** button. The footer has **To**:
@@ -422,8 +442,9 @@ to **Waiting for you**. The **Changes** card at the bottom of the page lists the
 from your project: the heading "Changes · N files" and total `+N/−M` counts. Each row has a status —
 **added**, **modified**, **deleted** or **binary** — and its own `+N/−M`. Click a file to open its
 diff (**Show the diff**); click again to close it (**Hide the diff**). Binary files cannot be
-expanded. The card header has **Refresh changes** and a collapse toggle (**Show changes** / **Hide
-changes**).
+expanded. The card header has **Refresh changes** and a fold toggle (**Show changes** / **Hide
+changes**); the fold is remembered per session like every other block, and the card's bottom edge can
+be dragged to give the file list more room (see **Blocks: fold, hide and resize**).
 
 ![The Changes card with a file diff open](artel-in-chat/screens/changes.png)
 

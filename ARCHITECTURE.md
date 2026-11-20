@@ -77,6 +77,16 @@ previous runs of this session.
   scroll together under the fixed route/live strips, while the composer stays pinned below. The
   «Итоги автоочереди» card collapses to its title row and scrolls itself into view when a shift finishes,
   so no block can be painted under the composer or past the panel edge (issue #7).
+- **Blocks**: every block of the run column — plan card, agent replies, tool groups, parts card, changes
+  card, queue strip — follows one contract: the header folds the block to a single line with a line
+  count, the **Блоки** toolbar hides a kind of block or switches the page to **Компактно**, long blocks
+  are clamped (`Clamp`: 40vh/36vh/32vh by kind) with «Показать целиком», and bottom-edge resizers plus
+  the draggable `.dsh-artel-run__split` above the composer resize them IDE-panel style. The fold, hide
+  and height state is one per-session preference object persisted in `localStorage` under
+  `dsh-artel:blocks:<sessionId>` (`{hidden, collapsed, heights, tall, compact, collapseAll}`), read by
+  `readBlockPrefs` and applied through `createBlocksApi`; the parts, changes and queue cards live inside
+  the same scroll region as the feed (`.dsh-artel-run__below`), so no block can overflow onto another
+  (issue #8).
 - **Actions**: `Apply changes` (primary, confirmation, all or selected files), `Discard run`
   (destructive, confirm). Apply only enabled when there are changes and the run is not running.
 - **Agents** (all modes): rows with name, role, claimed files, state and the two route pickers; collisions flagged.

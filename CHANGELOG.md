@@ -25,6 +25,37 @@ All notable changes to this project are documented here. The format follows
   a tall queue strip pushed the title above the panel top and the queue below the panel bottom. It now
   scrolls, while auto margins keep the short layout centred.
 
+## [0.10.0] — 2026-11-21
+
+### Added
+
+- **Every block of the run page can be folded, hidden and resized (issue #8).** The plan card, agent
+  replies, grouped tool calls, the parts card, the changes card and the queue strip follow one block
+  contract: the header is a button, it folds the block to a single line («ПЛАН · 24 строки»,
+  «Олег · 6 строк», «Инструментов: 4»), and the folded state is remembered per chat session in
+  `localStorage` (`dsh-artel:blocks:<sessionId>`), so it survives a re-render and a page reload.
+- **A block toolbar above the feed.** Chips hide or bring back each kind of block (План / Агенты /
+  Инструменты / Части / Изменения / Очередь), **Компактно** folds every block at once, and
+  **Свернуть все** / **Развернуть все** do the same in one click; the choice is remembered per session.
+- **Long blocks stay inside their own frame.** The plan text, agent replies, tool output, the parts
+  card, the changes card and the queue strip are clamped to a comfortable max-height (40vh / 36vh / 32vh
+  by kind, or the height you dragged), scroll inside it, and offer **Показать целиком** / **Свернуть**
+  when the content runs past the frame.
+- **Drag the bottom edge of any block,** and the handle above the composer, to size the feed and the
+  write field IDE-panel style; the dragged heights are remembered together with the folds.
+- The plan card no longer floats over the feed: the parts card, the changes card and the queue strip
+  live in the same scroll region as the feed (`.dsh-artel-run__below`), and the composer is pinned
+  outside it after a draggable split, so no block can be painted over another.
+
+### Fixed
+
+- **The plan card no longer covers the feed and the composer no longer covers the queue (issue #8).**
+  In 0.9.1 the run column was one scroll region, but every non-feed block still rendered at full
+  height: a 24-line plan took half the pane, the parts card pushed the changes card out of view, and
+  the queue strip was clipped to its first line. With folding, clamping and the block toolbar the feed
+  keeps a usable viewport at any panel height, while the auto-queue results card (issue #7) still
+  scrolls itself into view when a shift finishes.
+
 ## [0.9.0] — 2026-11-21
 
 ### Added

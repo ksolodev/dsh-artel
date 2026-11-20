@@ -160,11 +160,11 @@ with a warning in the feed.
 ## Auto-queue — the night shift
 
 Every chat session has a queue. Stack tasks in the **Waiting** column with **Add**: each one is an ordinary
-Artel run with its own mode and model — Solo, Swarm, Conductor or Fusion — but it waits its turn instead of
-starting at once. The Orchestrator is shown in that picker disabled, with the reason: a queued task starts
-from the last saved version, and the Orchestrator cannot start from a saved version yet. The queue belongs
-to the session, so another chat has its own; a chat message sent while the queue is running becomes the first
-task instead of interrupting the agent.
+Artel run with its own mode and model — Solo, Swarm, Conductor, Orchestrator or Fusion — but it waits its turn
+instead of starting at once. The Orchestrator is a queue mode like any other: its plan is accepted
+automatically, because nobody will approve it at night. The queue belongs to the session, so another chat has
+its own; a chat message sent while the queue is running becomes the first task instead of interrupting the
+agent.
 
 Flip **Auto-queue** and the stack becomes an unattended night shift. Before the first task the pre-flight
 asks you to decide about earlier versions that were never saved or parked, shows the check command and the
@@ -180,12 +180,16 @@ publish, deploy, tracker comment or message outside the machine — never raises
 long-running dev server, stays inside its copy, runs the project's checks and finishes with a short summary
 of what it changed, checked and assumed.
 
-A finished task must pass the check before it becomes a version (with the check off, it is saved on the
-agent's word and marked as such). A failed check sends the output back to
-the same worker for a fix, at most twice; a task that still fails is parked. Versions are ordinary Artel
-versions: the next task starts from the last successful one, so the queue builds on itself, while the diff
-base stays the real project, so applying a later version still shows the whole difference and you review
-and apply it exactly like a manual run.
+A finished task must pass the check before it becomes a commit on the queue's current branch (with the check
+off, it is saved on the agent's word and marked as such). A failed check sends the output back to the same
+worker for a fix, at most twice; a task that still fails is parked. Every queue has a git repository of its own
+under `stateDir/repos/`, so the project's own `.git` is never touched and a non-git project works the same way;
+the next task starts from the branch tip, and each task's change is its own small commit rather than the whole
+night. The queue head shows the current branch, and **Все ветки** opens the branch modal: the graph, the
+commits with their diffs, and the apply and merge dialogs. **Применить ветку** applies the whole branch in one
+action; unticking a commit rebuilds the remaining ones on the current applied state. Uncommitted project
+changes are detected before an apply and become an explicit drift commit instead of being silently overwritten,
+and branches merge like git branches (`--no-ff`, with a fixer agent resolving textual conflicts).
 
 **Parked** is where tasks go when they cannot pass unattended: the check still fails after two fixes, the
 diff contains a secret or junk, the agent tries to publish outward, or the agent reports that it is blocked.
@@ -197,8 +201,8 @@ login ends it.
 **Stop** interrupts the agent and parks the partial work, **Finish after the current task** lets the
 current task pass its check and then stops, and switching **Auto-queue** off stops taking new tasks. The
 queue also ends by itself when it is empty, when the task limit is reached, after three parks in a row,
-when the login is lost, or when the disk is nearly full. The **Auto-queue results** card then lists the
-saved versions, the parked tasks and the reason the queue stopped. It collapses to its title, and the run
+when the login is lost, or when the disk is nearly full. The **Auto-queue results** card then lists the task
+commits it made, the parked tasks and the reason the queue stopped. It collapses to its title, and the run
 column scrolls, so on a short panel the card stays reachable instead of hiding under the composer.
 
 ## Factory — the ticket pipeline
@@ -355,7 +359,7 @@ All values are optional; set them in the bundle's plugin configuration.
 | `idleGraceMs` | `1200` | How long Artel waits for a possible agent-to-agent message before it calls the run idle (0–10000). |
 | `excludeGlobs` | `[]` | Extra paths never copied, diffed, or applied. |
 | `copyRoot` | `<DSH home>/artel/<profile>/copies` | Where run copies are created. |
-| `stateDir` | `<DSH home>/artel/<profile>/state` | Run index and feeds; the auto-queue and Factory stores also live here. |
+| `stateDir` | `<DSH home>/artel/<profile>/state` | Run index and feeds; the auto-queue stores (with the queue's branch repositories under `repos/`) and Factory boards also live here. |
 
 A Conductor run starts one conductor plus `swarmAgentCount` workers and needs the subagent stack in the
 DSH profile. A profile without it refuses a Conductor run with an error; unlike Swarm, there is no
@@ -430,7 +434,8 @@ independent-session fallback.
 
 Run records and feeds are plain JSON and JSONL files under `stateDir`. A session's auto-queue and a
 project's Factory boards are plain JSON there too (`queue/` and `tickets/`), and ticket attachments are
-ordinary files under `attachments/`. Agent conversations are ordinary DSH sessions and stay in your
+ordinary files under `attachments/`. The queue's own git repositories live under `repos/` beside them, with
+scratch worktrees under `worktrees/`. Agent conversations are ordinary DSH sessions and stay in your
 session store. The plugin's host half talks to the client over
 a loopback-only HTTP API; every request is checked for a local socket, a local Host header and a
 same-origin origin.

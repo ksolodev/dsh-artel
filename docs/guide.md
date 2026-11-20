@@ -268,9 +268,10 @@ in **Planning** and messages are refused; after that the normal message rules ap
 
 Every chat session has its own queue, and the **Waiting** column of the panel is where it lives. Write
 the next task into "What to do next…" and press **Add**: the task joins the queue instead of starting a
-run, and it can be given its own mode (Solo, Swarm, Conductor or Fusion) and model. The queue belongs to
-the session, so another chat stacks its own tasks; a chat message sent while the queue runs does not
-interrupt the agent — it becomes the first task.
+run, and it can be given its own mode (Solo, Swarm, Conductor, Orchestrator or Fusion) and model. The
+Orchestrator is a queue mode like any other: its plan is accepted automatically, because nobody will approve
+it at night. The queue belongs to the session, so another chat stacks its own tasks; a chat message sent while
+the queue runs does not interrupt the agent — it becomes the first task.
 
 Flip **Auto-queue** to run the stack unattended, one task after another. The queue only matters while the
 toggle is on: with it off a task waits in the **Waiting** column and nothing starts. Before the first task
@@ -289,11 +290,15 @@ publish, deploy, tracker comment or message outside the machine), never raises a
 long-running dev server, stays in its copy, runs the project's checks and ends with a short summary of what
 it changed, checked and assumed.
 
-A finished task must pass the check before it becomes a version. A failed check is sent back to the same
-worker as a fix attempt, at most twice; the task then either passes and is saved as a version, or is
-parked. A version is an ordinary Artel version: the next task starts from the last successful one, so the
-queue builds on its own result, while the diff base stays the real project, so you still review and apply a
-version exactly like a manual run.
+A finished task must pass the check before it becomes a commit on the queue's current branch. A failed check
+is sent back to the same worker as a fix attempt, at most twice; the task then either passes and is committed,
+or is parked. The queue keeps its history in a git repository of its own under `stateDir/repos/`, so the
+project's `.git` is never touched and a non-git project works the same way; the next task starts from the
+branch tip, and each task's change is its own small commit, not the whole night. The queue head shows the
+current branch, and **Все ветки** opens the branch modal — the graph, the commits with their diffs, and the
+apply and merge dialogs. **Применить ветку** applies the whole branch in one action; unticking a commit
+rebuilds the remaining ones on the current applied state, uncommitted project changes become an explicit drift
+commit, and branches merge like git branches (`--no-ff`, a fixer agent resolving textual conflicts).
 
 **Parked** collects the tasks that cannot pass unattended: the check failed after two fixes, the diff
 contains a secret or junk, the agent tried to publish outward, or the agent reported that it is blocked. A
@@ -305,8 +310,8 @@ resumes after the reset; a lost login ends it.
 **Stop** interrupts the agent and parks the partial work, **Finish after the current task** lets the
 current task pass its check and then stops, and switching **Auto-queue** off stops taking new tasks. The
 queue ends by itself when it is empty, when the task limit is reached, after three parks in a row, when the
-login is lost, or when the disk is nearly full. The **Auto-queue results** card then shows the versions it
-saved with their checks, the parked tasks with their reasons and the tasks that were not taken. The card
+login is lost, or when the disk is nearly full. The **Auto-queue results** card then shows the task commits it
+made with their checks, the parked tasks with their reasons and the tasks that were not taken. The card
 collapses to its **Auto-queue results** title, and when a shift finishes it scrolls itself into view: the
 run column scrolls, so a short panel never ends up hiding the card under the composer.
 

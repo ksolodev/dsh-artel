@@ -4,6 +4,46 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] — 2026-11-21
+
+The auto-queue keeps its history in a git repository owned by the app. One task
+is one commit on a branch; the night shift stops being a single repeated diff.
+
+### Added
+
+- **Queue branches.** Every queue has a current branch and a git repository of
+  its own (`<state>/repos/<projectKey>.git`); the project's own `.git` is never
+  touched and non-git projects work the same way.
+- **Per-task versions.** A passed task becomes its own commit with a message,
+  a parent and a small reviewable diff — the run page shows that diff, not the
+  whole night.
+- **Apply and rebuild.** «Применить ветку» applies the whole branch in one
+  action; unchecking a commit rebuilds the remaining ones on the current applied
+  state. Uncommitted project changes are detected and become an explicit drift
+  commit instead of being silently overwritten.
+- **Branch merges.** Branches merge like git branches (`--no-ff`, merge commit),
+  with a fixer agent that resolves textual conflicts before the merge commit.
+- **The Orchestrator in the auto-queue.** It is a normal queue mode now: its
+  plan is accepted automatically, it is seeded from the branch tip, and a failed
+  check is repaired by a fixer on the assembled copy (two attempts, then park).
+- **Queue UI.** The queue head shows the current branch; «Все ветки» opens a
+  modal with the branch graph, commit list and apply/merge dialogs.
+
+### Changed
+
+- `POST /api/dsh-artel/queue` accepts `mode: "orchestrator"`; unknown modes keep
+  answering `400 queue/mode-unknown`.
+- The 0.8.3 disabled-Orchestrator picker entry is gone: all five modes are
+  selectable.
+- Legacy 0.10 queues migrate on the first pump: the saved version becomes one
+  imported commit on a branch; queues with pending unsaved versions stay in
+  legacy mode until those runs are dealt with.
+
+### Fixed
+
+- Queue versions are no longer cumulative diffs of the project: each version is
+  the change of its own task, and the branch chain is what gets applied.
+
 ## [0.11.1] — 2026-11-21
 
 ### Added

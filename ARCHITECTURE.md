@@ -16,7 +16,7 @@ A DSH bundle plugin (`dsh-artel`) that turns "develop this in my project" into a
 - **Swarm** — 3 agents, ONE shared copy and ONE agent tree (the first agent is the tree root, the other two are its continuable subagents), so they can really message each other with the standard team tools. First turn is planning/ownership only (no edits), then parallel work in disjoint file areas. One combined diff, one Apply.
 - **Conductor** — 1 conductor + `swarmAgentCount` workers (three by default), ONE shared copy and ONE agent tree like Swarm: the conductor is the root Session, the workers are its subagents. The first turn is planning only — the workers propose the shares and the conductor approves or reassigns them, its word is final. While the workers edit in parallel, a worker's question reaches the conductor and is answered without the user, and a failed worker's share is moved to a live worker. When every worker is idle the conductor reviews the whole copy (changed files + the project's checks) against the task and answers `VERDICT: accept` or `VERDICT: rework` with remarks, at most two rework rounds; accepted work still waits for the user's Apply.
 - **Orchestrator** — a planner reads the real project (read-only) and splits the goal into parts with done conditions; each part is worked and reviewed in its own copy, and the accepted parts are assembled into one copy by the host (a merger resolves only real conflicts). One combined diff, one Apply, still only by the user.
-- **Auto-queue** (v0.8) — a per-chat-session queue of tasks that runs unattended when the «Автоочередь» toggle is on. Every task is an ordinary run; a finished task passes the check command, becomes its own version, and the next task is seeded from the last successful version (`basePath`) while the diff base stays the real project. Night-shift rules, a check gate, parking and a results card; the Orchestrator is not a queue mode yet — the picker shows it disabled with the reason and the API refuses it with `400 queue/mode-unsupported`.
+- **Auto-queue** (v0.8) — a per-chat-session queue of tasks that runs unattended when the «Автоочередь» toggle is on. Every task is an ordinary run; a finished task passes the check command and becomes one commit on the queue's current branch. The queue keeps its history in an app-owned git repository: one task becomes one commit on a branch, apply rewrites the project from the branch, and the Orchestrator is a queue mode like any other. Night-shift rules, a check gate, parking and a results card.
 - **Factory** (v0.8) — a per-project ticket board run by agents: incoming tickets go through triage, work, tests, app check and review with repair rounds and land in «Готово к PR», where only the user opens a PR or merges. Tickets come from the board's incoming field, GitHub issues and GitHub/GitLab/Jira/Linear polling. The factory itself never sends anything outward.
 
 The real project is never written by an agent: agents run with cwd = copy. Apply is a user action, in our UI.
@@ -248,7 +248,7 @@ A Fusion run keeps its own in-memory `runtime.stage` (`panel`, `judge`, `working
 
 An Orchestrator run keeps an in-memory `runtime.orch` (`stage` one of `planning`, `working`, `merging`, `merge-stopped`, `assembled`, plus the plan retry counter, the part awaiting review, the merge retry counter, the conflict list and the merger's agent id). It is host-side only as well: the run stays `planning` while the planner reads the project (nothing is edited), `running` while the parts work, are reviewed, reworked and assembled, `merge-stopped` if you stop it in the middle of the merge, and `waiting` once the assembly is finished. The plan and the merge state themselves are persisted on the run record (`plan`, `merge`) because the client renders them; there are still no new statuses and no new feed kinds.
 
-An **auto-queue** is stored separately from the run record: `<DSH_HOME>/artel/<profile>/state/queue/<encoded-sessionId>.json`, one JSON per chat session (`QueueStore` in `lib/queue.js`, atomic tmp+rename, serialized writes). The queue record holds the switch and limit, the check command (explicit, disabled, or guessed by `suggestCheckCommand`), the task list (`queued`, `running`, `passed`, `parked`, `skipped`, `stopped`), `lastVersion {runId, path, title, changeCount, at}`, `stats {taken, passed, parked, consecutiveParks, startedAt}`, the event log, the results card, `stopReason`, `retryAt` and `ignoredVersions`. A task is not a run of its own kind: its `runId` and `basePath` point at an ordinary run and its seeded copy, so a queue version is a normal Artel version the user reviews, applies or discards.
+An **auto-queue** is stored separately from the run record: `<DSH_HOME>/artel/<profile>/state/queue/<encoded-sessionId>.json`, one JSON per chat session (`QueueStore` in `lib/queue.js`, atomic tmp+rename, serialized writes). The queue record holds the switch and limit, the check command (explicit, disabled, or guessed by `suggestCheckCommand`), the task list (`queued`, `running`, `passed`, `parked`, `skipped`, `stopped`), `model` (`branches` for the branch queues; a pre-0.12 queue keeps the legacy shape until it migrates), `project {repoDir, head, importedAt, applied}`, `branches` and `currentBranchId`, `stats {taken, passed, parked, consecutiveParks, startedAt}`, the event log, the results card, `stopReason`, `retryAt` and `ignoredVersions`. A task is not a run of its own kind: its `runId`, `branchId` and `parentCommit` point at an ordinary run whose diff is committed to the queue's branch, so a queue version is one commit the user reviews on the branch and applies from there. The legacy `lastVersion {runId, path, title, changeCount, at}` exists only while a pre-0.12 queue waits for migration.
 
 **Factory** state is `<DSH_HOME>/artel/<profile>/state/tickets/boards.json` (`TicketStore` in `lib/factory.js`): board settings (template, per-role models, allowed routes, limits, commands, trackers, readiness) and the tickets in stages `incoming → triage → working → tests → check → review → ready / waiting → done`, each with its spec, route, repair round, run ids, versions, branch/PR and event log. Ticket attachments are ordinary files under `<DSH_HOME>/artel/<profile>/state/attachments/<boardId>/<ticketId>/`. Both runners reconcile their store with the run store on boot: a live run is adopted, a dead one parks or requeues its task or ticket; no runner keeps the only copy of anything.
 
@@ -286,7 +286,7 @@ then shows nothing and a direct call gets `503 artel/unavailable`).
 | method | path | body/query | result |
 |---|---|---|---|
 | GET | `/api/dsh-artel/queue` | `sessionId`, `projectPath` | queue summary (tasks, toggle state, stats, results, check command) |
-| POST | `/api/dsh-artel/queue` | `{ sessionId, texts[], task?, mode?, model?, prepend?, basePath? }` | `{ queue }` — adds tasks; never starts them; `basePath` seeds a task from a saved version copy |
+| POST | `/api/dsh-artel/queue` | `{ sessionId, texts[], task?, mode?, model?, prepend?, basePath? }` | `{ queue }` — adds tasks; never starts them; a branch queue puts them on its current branch, while a legacy (0.10) task can still be seeded from a saved version copy with `basePath` |
 | GET | `/api/dsh-artel/queue/preflight` | `sessionId`, `projectPath` | unsaved versions, check command, limit, disk, whether a run is live |
 | POST | `/api/dsh-artel/queue/autopilot` | `{ sessionId, projectPath, autopilot, limit?, checkCommand?, checkDisabled?, saveVersionRunIds?, postponeVersionRunIds?, decisions? }` | `{ queue, blocked? }` |
 | POST | `/api/dsh-artel/queue/stop` | `sessionId` | stops the agent, parks partial work |
@@ -297,6 +297,15 @@ then shows nothing and a direct call gets `503 artel/unavailable`).
 | POST | `/api/dsh-artel/queue/tasks/:taskId/move` | `{ sessionId, direction }` | `{ queue }` |
 | POST | `/api/dsh-artel/queue/versions/:runId/save` | `sessionId` | make the version the queue's `lastVersion` |
 | POST | `/api/dsh-artel/queue/versions/:runId/postpone` | `sessionId` | park it instead |
+| GET | `/api/dsh-artel/queue/branches` | `sessionId` | `{ queue, branches, currentBranchId, project }` — the branch summary, the applied head and the uncommitted drift |
+| POST | `/api/dsh-artel/queue/branches` | `{ sessionId, name?, fromCommit?, switchTo? }` | `{ branch, queue, branches, currentBranchId, project }` |
+| PATCH | `/api/dsh-artel/queue/branches/:branchId` | `{ sessionId, name }` | branch state with the renamed branch |
+| DELETE | `/api/dsh-artel/queue/branches/:branchId` | `sessionId` | branch state; refuses the applied branch (`artel/branch-applied`) and a branch with live tasks (`artel/branch-busy`) |
+| POST | `/api/dsh-artel/queue/branches/:branchId/switch` | `{ sessionId }` | branch state with the new current branch |
+| GET | `/api/dsh-artel/queue/branches/:branchId/commits` | `sessionId` | `{ commits }` — newest first, only the commits over the branch base, each with its files and change count |
+| POST | `/api/dsh-artel/queue/branches/:branchId/apply` | `{ sessionId, commitIds?, confirmDrift?, checkCommand?, force? }` | `{ queue, applied, check? }` — `applied` names the landed commit, the drift commit and the files written |
+| POST | `/api/dsh-artel/queue/branches/:branchId/merge` | `{ sessionId, sourceBranchId, checkCommand?, force? }` | `{ queue, mergeCommit, check? }` |
+| GET | `/api/dsh-artel/queue/project-state` | `sessionId` | `{ head, branchId, drift }` — the applied head and uncommitted project changes |
 
 | method | path | body/query | result |
 |---|---|---|---|
@@ -524,9 +533,11 @@ with a single agent, `run.agents[0]` (role `planner`), created with `sandboxMode
 `cwd = projectPath`: it reads the real project and cannot edit anything. No copy is made at start; the
 engine records `baseHashes` with `hashTree(project)` and keeps that manifest as the common base for every
 part copy. The start request asks the planner for `orchestratorParts` parts (default 3, clamped 2–4); the
-parser never accepts more than `MAX_ORCHESTRATOR_PARTS = 4` and folds the rest into the last part. Because
-the planner reads the real project and every part copies it again, an Orchestrator run cannot be seeded from
-a saved version (`basePath` is ignored); that is why it is not an auto-queue mode yet — see **Auto-queue**.
+parser never accepts more than `MAX_ORCHESTRATOR_PARTS = 4` and folds the rest into the last part. In an
+auto-queue task the run is seeded: the planner reads a read-only copy of the seed, every part copy starts
+from the seed, and the assembled run is committed on the queue's branch — that is what makes the Orchestrator
+a queue mode like any other (see **Queue branches and the git core**). A manual Orchestrator run still reads
+the real project (`basePath` is ignored).
 
 The host keeps a `runtime.orch` for the run (host-side only, never persisted — see **Data model**):
 
@@ -564,29 +575,35 @@ The host keeps a `runtime.orch` for the run (host-side only, never persisted —
 
 A queue is a per-chat-session list of ordinary tasks that runs unattended while the «Автоочередь» toggle
 is on. The pure half is `lib/queue.js`: task states (`queued`, `running`, `passed`, `parked`, `skipped`,
-`stopped`), the transition table `TASK_TRANSITIONS`, `QUEUE_MODES` (Solo, Swarm, Conductor, Fusion), the
-mode guard `queueModeRefusal` (the Orchestrator is shown disabled in the picker and refused by the route with
-`400 queue/mode-unsupported`, because it cannot start from a saved version yet), the helpers `nextQueuedTask`, `queueCounts`, `endsWithQuestion`,
+`stopped`), the transition table `TASK_TRANSITIONS`, `QUEUE_MODES` (Solo, Swarm, Conductor, Orchestrator,
+Fusion), the mode guard `queueModeRefusal` (it only rejects unknown modes with `400 queue/mode-unknown`; all
+five modes are selectable), the branch helpers `isBranchQueue` and `branchRefFor` (`refs/heads/artel/<branchId>`),
+the helpers `nextQueuedTask`, `queueCounts`, `endsWithQuestion`,
 `parkedBranch`, `classifyFailure`, `resetMinutes`, `stopReasonLabel`, `resultsCard` and `queueSummary`, the
 constants (`DEFAULT_QUEUE_LIMIT = 20`, `MAX_QUEUE_TASKS = 200`, `QUEUE_TUNING { maxFixes: 2, maxQuestions: 1,
 maxConsecutiveParks: 3, retryDelayMs: 15 min, minDiskBytes: 500 MB, checkTimeoutMs: 15 min }`) and
-`QueueStore`, which persists one JSON per session with atomic tmp+rename writes.
+`QueueStore`, which persists one JSON per session with atomic tmp+rename writes. On the first pump a queue
+opens its branch repository (`BranchService.ensure` from `lib/branches.js`) and patches the record to the
+branch model; `lib/git.js` is the repository itself (`ArtelGit`).
 
 `lib/queue-runner.js` is the pump (`QueueRunner`). Two design points keep it small:
 
-- **A task is just a run.** `addTasks` only writes task records; `setAutopilot` flips the switch. The pump
-  takes the next queued task, starts an ordinary run via `engine.start` with `autoqueue: true` and, when the
-  queue already has a successful version, `basePath = lastVersion.path`, so the run is seeded from that
-  version's copy while its diff base stays the real project. When the run settles, its diff is a normal Artel
-  version — `saveVersion` records it as the queue's `lastVersion`, while the pre-flight's `postponeVersion` puts
-  an older untracked version into `ignoredVersions`.
+- **A task is just a run on a branch.** `addTasks` only writes task records; `setAutopilot` flips the switch.
+  The pump takes the next queued task, materialises the current branch tip into a scratch directory
+  (`git.materialize`, `<stateDir>/worktrees/seed-<taskId>-<now>`, with no `.git`), and starts an ordinary run
+  via `engine.start` with `autoqueue: true`, `isolateFromBase: true`, `basePath = seed`, `branchId` and
+  `parentCommit = tip`, so the run diffs against the branch tip instead of the real project. On a pass
+  `#commitTaskRun` commits the run's copy with the task title as the message and the tip as the parent, moves
+  `refs/heads/artel/<branchId>` with a compare-and-swap and calls `engine.markCommitted`, which drops the run
+  copy. The legacy `lastVersion`/`ignoredVersions` path is used only while a pre-0.12 queue migrates.
 - **The gate is check + hygiene.** A finished task passes when the run is idle/waiting, the change scan found
   no secret or junk file and no outward command (`scanHygiene`, `scanOutward`), and `runCheck` with the queue's
   check command passed (or the check is disabled, or no command could be guessed). A failure is fed back with
-  `checkRepairPrompt` for `maxFixes = 2` attempts, then the task is parked. A task is also parked on an
-  unanswered second question (the first one is answered with `autoAnswerPrompt`), a `BLOCKED:` summary, or a
-  hygiene/outward finding; parked work keeps its copy and gets the branch `vf/parked-<runId>`, and «Отложенное»
-  is the parked list.
+  `checkRepairPrompt` for `maxFixes = 2` attempts, then the task is parked; for an Orchestrator task the repair
+  is `engine.repairArtifact` — a fixer agent on the assembled copy — instead of `engine.message`. A task is
+  also parked on an unanswered second question (the first one is answered with `autoAnswerPrompt`), a
+  `BLOCKED:` summary, or a hygiene/outward finding; parked work keeps its copy and gets the branch
+  `vf/parked-<runId>`, and «Отложенное» is the parked list.
 
 `classifyFailure` decides where a failure goes: `login-lost` ends the queue, `rate-limit` only pauses it (the
 reset time parsed out of the text when there is one, otherwise `retryDelayMs = 15 min`), anything else parks the
@@ -598,6 +615,18 @@ limit, three parks in a row, a lost login or low disk, and produces the `results
 Stop modes are `stop` (kill the agent, park the partial work), `finishAfterCurrent` and the toggle off; while a
 queue is live the pump ticks every `pollMs = 700` ms, and `summary()` is what the client reads for the
 «Ожидают» column and the «Итоги» card.
+
+## Queue branches and the git core
+
+The auto-queue keeps its history in a git repository owned by Artel, never in the user's project: `lib/git.js` (`ArtelGit`) is the repository and `lib/branches.js` (`BranchService`) owns branches and the apply/merge flows. The project's own `.git` is neither read nor written, and a non-git project works the same way.
+
+- **Repository.** One repository per project at `<stateDir>/repos/<projectKey>.git`, where `projectKey` is the first 20 hex characters of `sha1(path.resolve(projectPath))` (lowercased on Windows). `git init --bare` plus config: `core.bare = false`, `core.hooksPath` pointed at a directory that does not exist, `core.worktree` set to the real project, `HEAD` = `refs/heads/applied`, excludes for `node_modules`, the project's own `.git`, `excludeGlobs` and nested repositories, `info/attributes` with `* -text -filter`, and a dedicated Artel user, so commits never depend on the user's git identity. Every command pins `GIT_DIR`/`GIT_WORK_TREE`/`GIT_CONFIG_NOSYSTEM`/`GIT_TERMINAL_PROMPT=0`, and commits write through a throwaway index file, so the project's index and `.git` are untouched. `MIN_GIT_VERSION = 2.30.0`; without a usable `git` the queue refuses to run and reports `artel/git-missing`.
+- **Refs.** `refs/heads/applied` is the project's tip: it is imported on first use (`commitDir(project)`), and it is what "the project as Artel last wrote it" means. Every queue branch is `refs/heads/artel/<branchId>`; the queue record keeps `currentBranchId`, each branch keeps its name, `baseCommit`, `tipCommit` and `appliedAt`. Moving any ref is a compare-and-swap (`artel/git-ref-changed` when the expected old value no longer matches).
+- **Materialisation.** Agents never work inside a git worktree. `materialize(dir, commit)` checks the commit out into a scratch directory and removes the `.git` file, so the agent gets a plain copy and exactly the isolation ordinary runs already have. Apply, merge and check commands run in throwaway worktrees under `<stateDir>/worktrees/`, always removed and `git worktree prune`d in a `finally`.
+- **Apply.** `BranchService.apply(sessionId, {branchId, commitIds, confirmDrift, checkCommand, force})` moves the project from the applied tip to the branch: the whole branch on top of the current applied tip is a fast-forward; a project that has moved on since the branch started gets a merge commit («Apply <name>»); an unticked commit list rebuilds the branch — the selected commits are cherry-picked onto the applied tip and the new chain becomes the tip. Uncommitted project changes are drift: the apply is refused with `409 artel/project-drift` unless the user confirms, and then the dirty state is committed first as `Uncommitted project changes`. An optional check command runs in the worktree (with `node_modules` junctioned) and a failure answers `409 artel/check-failed` unless forced. Only the paths that differ between the applied tip and the target are written back (deletions included); the applied ref is then moved with a CAS, `engine.markApplied` marks the task runs that landed and `engine.refreshInstall` re-detects install needs. Applying an isolated run directly is refused with `artel/branch-apply-required` — the branch is the only way in.
+- **Merge.** `merge(targetBranchId, sourceBranchId, {checkCommand, force})` merges the source into the target in a detached worktree at the target tip. The merge is always `--no-ff` with a «Merge <source> into <target>» commit; textual conflicts go to a fixer agent (`engine.assist`, workspace-write on the worktree) and are re-checked for conflict markers; the target ref only moves after the fixer and the optional check gate succeed (`409 artel/merge-conflict` leaves the target intact otherwise).
+- **Drift and migration.** `projectState` reports the applied head and the `git status` drift, and the branch modal shows both. Queues that still hold unsaved 0.10 versions stay in legacy mode: on the first pump the saved version is imported as one commit («Импортированная версия 0.10: <title>») on a new branch, while `ensureBranches` answers `409 artel/legacy-queue` until the outstanding runs are reviewed.
+- **Cleanup.** After a task's commit, `engine.markCommitted` deletes the run's copy and its part copies — the commit is the history now. Seed directories are removed once the run has started, worktrees are removed and pruned after every apply, merge and check, parked tasks keep their copy and get `vf/parked-<runId>`, and removing a branch drops its ref but never the project's applied state.
 
 ## Factory (v0.8)
 
@@ -646,12 +675,22 @@ pipeline and `#step` drives the current stage:
 
 ### Engine support for unattended runs (v0.8)
 
-- `engine.start({ ..., basePath, sandboxMode, autoqueue, planApproval })` — `basePath` seeds the new copy from
-  an existing version copy instead of the project (the queue's version-to-version seeding); `sandboxMode` pins
+- `engine.start({ ..., basePath, isolateFromBase, branchId, parentCommit, sandboxMode, autoqueue, planApproval })` —
+  `basePath` seeds the new copy from an existing version copy instead of the project; `isolateFromBase` marks a
+  queue-branch run whose diff base is its seed (the branch tip) rather than the real project, with `branchId`
+  and `parentCommit` recording where its commit belongs; `sandboxMode` pins
   the new Session's sandbox (`read-only` for the Factory's triage, app-check and review agents); `autoqueue`
   marks the run and appends `nightShiftRules()` to every prompt; `planApproval` is accepted only for the
   Orchestrator and gates the run after the plan. The summary gains `autoqueue`, `basePath` (`null` when the run
-  was seeded from the project), `planApproval` and `planApproved`.
+  was seeded from the project), `planApproval`, `planApproved`, `isolated`, `branchId`, `parentCommit` and `commit`.
+- `engine.markCommitted(runId, { branchId, parentCommit, commit, files, changeCount })` — records a finished
+  queue task's commit: the run becomes `waiting`, its copy and part copies are removed and the file list is kept
+  for the run page. `engine.markApplied(runId)` marks the run whose commit a branch apply wrote into the
+  project, and `engine.refreshInstall(runId)` re-detects install needs right after it.
+- `engine.assist({ projectPath, copyPath, prompt, title, model, sandboxMode, timeoutMs })` — a short-lived fixer
+  session on a copy; `BranchService` uses it for rebuild and merge conflicts. `engine.repairArtifact(runId,
+  { prompt, purpose })` — sends a failed check back to a fixer on an assembled Orchestrator copy (queue tasks
+  only, one fixer at a time; 409 `artel/fixer-busy` / `artel/bad-stage` otherwise).
 - `engine.approvePlan(runId)` — releases a gated Orchestrator run. It is refused unless the run is a
   `planApproval` Orchestrator run with a parsed plan, and idempotent (an already approved run returns its
   summary); otherwise it sets `planApproved: true` and starts the parts.
@@ -670,6 +709,7 @@ dsh-artel/
   lib/*.js                # host modules: run-store.js copy.js diff.js models.js conductor.js fusion.js orchestrator.js
                           #   check.js trackers.js queue.js queue-runner.js factory.js factory-runner.js routes.js host-driver.js engine.js
                           #   project-chats.js (v0.11: task chats + workspace membership bridge)
+                          #   git.js branches.js (v0.12: the queue's git repository and its branches)
   locale/{en,ru,zh}.json  # meta.title/meta.description + strings
   icon.svg
   README.md, LICENSE
@@ -693,5 +733,5 @@ Server code is plain ESM JavaScript (no TS) so nothing has to be compiled; the c
 6. **M6 Conductor**: one conductor + N workers, share proposal/approval, peer Q&A through the conductor, failure handover, whole-copy review with checks, two-round rework cap, accepted work waiting for the user's Apply.
 7. **M7 Fusion**: three independent panel answers, a judge merge with a disputes count, one implementer; read-only panel and judge; five route pickers in the hero form; panelist/judge failure handling; the merged decision as a plan card; accepted work still waiting for the user's Apply.
 8. **M8 Orchestrator**: a planner splits the goal into parts with done conditions; one copy and two agents (a part agent and a read-only reviewer) per part; per-part accept/rework loop capped at two rounds; assembly of the accepted parts into one copy; a merger for files several parts changed, validated by the host; `plan`/`merge` in the run summary and a Parts card; apply refused while the merge is unfinished.
-9. **M9 Auto-queue**: a per-session queue store and pump; tasks as ordinary runs seeded from the last successful version (`basePath`); night-shift prompt rules and one auto-answered question; check gate with two repair attempts and a hygiene/outward scan; version saving; parking to `vf/parked-…` with «Отложенное»; failure classification with `retryAt` for subscription limits; stop/finish-after-current/toggle-off and the auto-end conditions; the «Итоги автоочереди» results card. Orchestrator stays out of the queue.
+9. **M9 Auto-queue**: a per-session queue store and pump; tasks as ordinary runs seeded from the last successful version (`basePath`); night-shift prompt rules and one auto-answered question; check gate with two repair attempts and a hygiene/outward scan; version saving; parking to `vf/parked-…` with «Отложенное»; failure classification with `retryAt` for subscription limits; stop/finish-after-current/toggle-off and the auto-end conditions; the «Итоги автоочереди» results card. The 0.12.0 release moved queue history onto branches (`git.js`, `branches.js`) and made the Orchestrator a queue mode — see **Queue branches and the git core**.
 10. **M10 Factory**: ticket boards with their own store, stages and transitions; the three templates; triage → work → tests → app check → review with repair rounds; «Ждёт вас» and the manual actions; readiness; ticket intake from «Входящие», GitHub issues and GitHub/GitLab/Jira/Linear polling; the «Готово к PR» flow (Pull Request, Merge, Return with a comment); engine `planApproval`/`approvePlan` and the read-only app check; nothing sent outward by the pipe.

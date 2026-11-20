@@ -612,6 +612,47 @@ function fakeQueueRunner() {
       calls.push({ method: 'postponeVersion', args: [sessionId, runId] })
       return { sessionId, ignored: [runId] }
     },
+    async branchesSummary(sessionId) {
+      calls.push({ method: 'branchesSummary', args: [sessionId] })
+      return {
+        queue: { sessionId },
+        project: { head: 'a'.repeat(40), repoDir: 'C:\\state\\repos\\key.git', drift: { dirty: false, files: [] } },
+        currentBranchId: 'b-1',
+        branches: [{ id: 'b-1', name: 'Main', ref: 'refs/heads/artel/b-1', baseCommit: 'a'.repeat(40), tipCommit: null }],
+      }
+    },
+    async createBranch(sessionId, input) {
+      calls.push({ method: 'createBranch', args: [sessionId, input] })
+      return { branch: { id: 'b-2', name: input.name }, branches: [] }
+    },
+    async renameBranch(sessionId, branchId, name) {
+      calls.push({ method: 'renameBranch', args: [sessionId, branchId, name] })
+      return { currentBranchId: branchId, branches: [] }
+    },
+    async switchBranch(sessionId, branchId) {
+      calls.push({ method: 'switchBranch', args: [sessionId, branchId] })
+      return { currentBranchId: branchId, branches: [] }
+    },
+    async removeBranch(sessionId, branchId) {
+      calls.push({ method: 'removeBranch', args: [sessionId, branchId] })
+      return { currentBranchId: null, branches: [] }
+    },
+    async branchCommits(sessionId, branchId) {
+      calls.push({ method: 'branchCommits', args: [sessionId, branchId] })
+      return [{ commit: 'c'.repeat(40), parents: ['a'.repeat(40)], subject: 'Answer two', date: '2026-11-21T00:00:00.000Z', files: ['src/app.js'], changeCount: 1 }]
+    },
+    async applyBranch(sessionId, input) {
+      calls.push({ method: 'applyBranch', args: [sessionId, input] })
+      return { applied: { branchId: input.branchId, commit: 'c'.repeat(40), files: 1 }, check: null }
+    },
+    async mergeBranches(sessionId, input) {
+      calls.push({ method: 'mergeBranches', args: [sessionId, input] })
+      return { mergeCommit: 'd'.repeat(40), check: null }
+    },
+    async projectState(sessionId) {
+      calls.push({ method: 'projectState', args: [sessionId] })
+      return { head: 'a'.repeat(40), branchId: 'b-1', drift: { dirty: false, files: [] } }
+    },
   }
   return runner
 }
@@ -752,12 +793,19 @@ test('the queue route forwards new tasks to addTasks', async () => {
   assert.equal(noSession.body.code, 'artel/bad-request')
 })
 
-test('the queue route refuses a mode it does not know', async () => {
+test('the queue route accepts the Orchestrator and still refuses unknown modes', async () => {
   const queueRunner = fakeQueueRunner()
   const { webServer } = setup({ queueRunner })
 
-  // The Orchestrator became a queue mode with the branch queue model (0.12),
-  // so the refusal that remains is for a typo rather than a known-but-unsupported mode.
+  const orchestrator = await call(webServer.routes, `${API_PREFIX}/queue`, {
+    method: 'POST',
+    body: { sessionId: 's1', task: 'Plan the release', mode: 'orchestrator' },
+  })
+  assert.equal(orchestrator.status, 200)
+  assert.equal(queueRunner.calls.length, 1)
+  assert.equal(queueRunner.calls[0].method, 'addTasks')
+  assert.equal(queueRunner.calls[0].args[0].mode, 'orchestrator')
+
   const unknown = await call(webServer.routes, `${API_PREFIX}/queue`, {
     method: 'POST',
     body: { sessionId: 's1', task: 'Do the thing', mode: 'banana' },
@@ -766,7 +814,99 @@ test('the queue route refuses a mode it does not know', async () => {
   assert.equal(unknown.body.code, 'queue/mode-unknown')
   assert.match(unknown.body.error, /banana/)
   assert.match(unknown.body.error, /solo, swarm, conductor, orchestrator, fusion/)
-  assert.equal(queueRunner.calls.length, 0, 'an unknown mode never reaches addTasks')
+  assert.equal(queueRunner.calls.length, 1, 'an unknown mode never reaches addTasks')
+})
+
+test('the queue branch routes forward branch operations', async () => {
+  const queueRunner = fakeQueueRunner()
+  const { webServer } = setup({ queueRunner })
+
+  const list = await call(webServer.routes, `${API_PREFIX}/queue/branches?sessionId=s1`)
+  assert.equal(list.status, 200)
+  assert.equal(list.body.currentBranchId, 'b-1')
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'branchesSummary', args: ['s1'] })
+
+  const created = await call(webServer.routes, `${API_PREFIX}/queue/branches`, {
+    method: 'POST',
+    body: { sessionId: 's1', name: 'Night', fromCommit: 'a'.repeat(40) },
+  })
+  assert.equal(created.status, 200)
+  assert.deepEqual(queueRunner.calls.at(-1), {
+    method: 'createBranch',
+    args: ['s1', { name: 'Night', fromCommit: 'a'.repeat(40), switchTo: true }],
+  })
+
+  const renamed = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1`, {
+    method: 'PATCH',
+    body: { sessionId: 's1', name: 'Renamed' },
+  })
+  assert.equal(renamed.status, 200)
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'renameBranch', args: ['s1', 'b-1', 'Renamed'] })
+
+  const switched = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1/switch`, {
+    method: 'POST',
+    body: { sessionId: 's1' },
+  })
+  assert.equal(switched.status, 200)
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'switchBranch', args: ['s1', 'b-1'] })
+
+  const commits = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1/commits?sessionId=s1`)
+  assert.equal(commits.status, 200)
+  assert.equal(commits.body.commits[0].subject, 'Answer two')
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'branchCommits', args: ['s1', 'b-1'] })
+
+  const applied = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1/apply`, {
+    method: 'POST',
+    body: { sessionId: 's1', commitIds: ['c1', 5], confirmDrift: true, checkCommand: 'npm test', force: true },
+  })
+  assert.equal(applied.status, 200)
+  assert.deepEqual(queueRunner.calls.at(-1), {
+    method: 'applyBranch',
+    args: ['s1', { branchId: 'b-1', commitIds: ['c1'], confirmDrift: true, checkCommand: 'npm test', force: true }],
+  })
+
+  const merged = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1/merge`, {
+    method: 'POST',
+    body: { sessionId: 's1', sourceBranchId: 'b-2' },
+  })
+  assert.equal(merged.status, 200)
+  assert.deepEqual(queueRunner.calls.at(-1), {
+    method: 'mergeBranches',
+    args: ['s1', { targetBranchId: 'b-1', sourceBranchId: 'b-2', checkCommand: '', force: false }],
+  })
+
+  const removed = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1?sessionId=s1`, { method: 'DELETE' })
+  assert.equal(removed.status, 200)
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'removeBranch', args: ['s1', 'b-1'] })
+
+  const project = await call(webServer.routes, `${API_PREFIX}/queue/project-state?sessionId=s1`)
+  assert.equal(project.status, 200)
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'projectState', args: ['s1'] })
+
+  const wrongMethod = await call(webServer.routes, `${API_PREFIX}/queue/branches?sessionId=s1`, { method: 'PUT' })
+  assert.equal(wrongMethod.status, 405)
+  const noSource = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1/merge`, { method: 'POST', body: { sessionId: 's1' } })
+  assert.equal(noSource.status, 400)
+  assert.equal(noSource.body.code, 'artel/bad-request')
+})
+
+test('a branch error keeps its status, code and details in the JSON body', async () => {
+  const queueRunner = fakeQueueRunner()
+  queueRunner.applyBranch = async () => {
+    const error = new Error('The project has uncommitted changes.')
+    error.status = 409
+    error.code = 'artel/project-drift'
+    error.details = { drift: { dirty: true, files: ['src/app.js'] }, branchId: 'b-1' }
+    throw error
+  }
+  const { webServer } = setup({ queueRunner })
+  const response = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1/apply`, {
+    method: 'POST',
+    body: { sessionId: 's1' },
+  })
+  assert.equal(response.status, 409)
+  assert.equal(response.body.code, 'artel/project-drift')
+  assert.deepEqual(response.body.details, { drift: { dirty: true, files: ['src/app.js'] }, branchId: 'b-1' })
 })
 
 test('the queue autopilot route forwards its flags and decisions', async () => {

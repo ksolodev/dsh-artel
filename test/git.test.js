@@ -225,3 +225,81 @@ test('worktrees are linked, removable and prunable', async () => {
   assert.equal(await fs.stat(dir).then(() => true).catch(() => false), false)
   await git.pruneWorktrees()
 })
+
+async function workFrom(project) {
+  const dir = await tempDir('artel-work-')
+  await fs.cp(project, dir, { recursive: true })
+  return dir
+}
+
+async function repoFixture() {
+  const stateDir = await tempDir('artel-state-')
+  const project = await makeProject()
+  const git = await ArtelGit.init({ stateDir, projectPath: project })
+  const base = await git.importProject()
+  return { stateDir, project, git, base }
+}
+
+test('mergeInto creates a merge commit with two parents', async () => {
+  const { git, base } = await repoFixture()
+  const branchWork = await workFrom(await git.materialize(path.join(await tempDir('artel-base-'), 'b'), base))
+  await fs.writeFile(path.join(branchWork, 'README.md'), '# branch\n')
+  const branchCommit = await git.commitDir(branchWork, { parent: base, message: 'Task: branch readme' })
+  await git.updateRef('refs/heads/artel/b1', branchCommit, null)
+
+  const work = path.join(await tempDir('artel-wt-'), 'merge')
+  await git.worktreeAdd(work, base)
+  const result = await git.mergeInto(work, { source: branchCommit, message: 'Merge b1' })
+  assert.deepEqual(result.conflicts, [])
+  assert.notEqual(result.mergeCommit, null)
+
+  const log = await git.log(result.mergeCommit, { max: 1 })
+  assert.deepEqual([...log[0].parents].sort(), [base, branchCommit].sort())
+})
+
+test('merge conflict is reported and mergeContinue completes after resolution', async () => {
+  const { git, base } = await repoFixture()
+  const branchWork = await workFrom(await git.materialize(path.join(await tempDir('artel-base-'), 'b'), base))
+  await fs.writeFile(path.join(branchWork, 'README.md'), '# branch\n')
+  const branchCommit = await git.commitDir(branchWork, { parent: base, message: 'Task: branch readme' })
+
+  const appliedWork = await workFrom(await git.materialize(path.join(await tempDir('artel-base-'), 'm'), base))
+  await fs.writeFile(path.join(appliedWork, 'README.md'), '# main\n')
+  const appliedCommit = await git.commitDir(appliedWork, { parent: base, message: 'Other branch' })
+  await git.updateRef('refs/heads/applied', appliedCommit, base)
+
+  const work = path.join(await tempDir('artel-wt-'), 'merge')
+  await git.worktreeAdd(work, appliedCommit)
+  const result = await git.mergeInto(work, { source: branchCommit, message: 'Merge b1' })
+  assert.deepEqual(result.conflicts, ['README.md'])
+  assert.equal(result.mergeCommit, null)
+
+  await fs.writeFile(path.join(work, 'README.md'), '# merged\n')
+  await git.addAll(work)
+  const mergeCommit = await git.mergeContinue(work, { message: 'Merge b1' })
+  assert.notEqual(mergeCommit, null)
+  assert.equal(await git.show(mergeCommit, 'README.md'), '# merged\n')
+})
+
+test('cherryPick applies one commit and reports conflicts, quit clears state', async () => {
+  const { git, base } = await repoFixture()
+  const branchWork = await workFrom(await git.materialize(path.join(await tempDir('artel-base-'), 'b'), base))
+  await fs.writeFile(path.join(branchWork, 'src', 'app.js'), 'export const answer = 2\n')
+  const branchCommit = await git.commitDir(branchWork, { parent: base, message: 'Task: answer' })
+
+  const work = path.join(await tempDir('artel-wt-'), 'pick')
+  await git.worktreeAdd(work, base)
+  const clean = await git.cherryPick(work, branchCommit)
+  assert.deepEqual(clean.conflicts, [])
+  const picked = await git.commitWorktree(work, { message: 'Apply answer' })
+  assert.equal(await git.show(picked, 'src/app.js'), 'export const answer = 2\n')
+
+  const conflictWork = path.join(await tempDir('artel-wt-'), 'conflict')
+  await git.worktreeAdd(conflictWork, base)
+  await fs.writeFile(path.join(conflictWork, 'src', 'app.js'), 'export const answer = 9\n')
+  await git.addAll(conflictWork)
+  await git.commitWorktree(conflictWork, { message: 'Different edit' })
+  const conflicted = await git.cherryPick(conflictWork, branchCommit)
+  assert.deepEqual(conflicted.conflicts, ['src/app.js'])
+  await git.quitCherryPick(conflictWork)
+})

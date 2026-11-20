@@ -39,8 +39,10 @@ that it works in an isolated copy.
    where it lives in the project. You do not need to prepare any files — the agents find and read
    them.
 2. Pick a mode: **Solo** ("One agent, one copy"), **Swarm** ("Three agents divide the files"),
-   **Conductor** ("Three agents divide the files; the conductor accepts the work") or **Fusion**
-   ("Three models answer independently, a judge merges them, one model does the work").
+   **Conductor** ("Three agents divide the files; the conductor accepts the work"), **Fusion**
+   ("Three models answer independently, a judge merges them, one model does the work") or
+   **Orchestrator** ("A planner splits a big goal into parts, each part gets its own copy and a
+   reviewer").
 3. Press **Go →** (or Ctrl+Enter). While the request is in flight the button reads "Starting…".
 
 Below the form: "Artel works in an isolated copy of the project. Your files stay untouched until you
@@ -71,10 +73,11 @@ five routes can still be changed on the run page while the run is alive, before 
 
 Artel then:
 
-1. copies the project into a separate directory outside it;
-2. starts one agent (Solo), three (Swarm), a conductor with its workers (Conductor) or five Fusion
-   agents — three panel models, the judge and the implementer — all with the copy as their working
-   directory;
+1. copies the project into a separate directory outside it (in Orchestrator mode the copies are made
+   later, one per part, after the planner has split the goal);
+2. starts one agent (Solo), three (Swarm), a conductor with its workers (Conductor), five Fusion
+   agents — three panel models, the judge and the implementer — or, in Orchestrator, the planner first
+   and then a part agent and a reviewer per part, all with their copy as their working directory;
 3. hands them the task and a few rules: edit only the copy, never touch the real project, run the
    appropriate checks and finish by explaining what was done.
 
@@ -198,14 +201,172 @@ run stays in **Planning**, so the other modes' "wait for the next stage" rule ap
 subagent stack: all five agents are ordinary sessions, and each one is a separate chat in the session
 sidebar, titled `Artel · Fusion · <role> — <task>`.
 
+## Orchestrator
+
+Orchestrator is for a goal too big for one agent: a direction, not a ten-minute task. A planner splits
+it into independent parts, each part is worked in its own copy of the project and checked by a reviewer
+against the plan's conditions, and only the accepted parts are assembled into one copy for you to
+apply. The split is visible before any work starts.
+
+**1. The planner splits the goal.** The run starts with one agent, the planner, reading the real
+project in read-only mode. It answers with a short plan: a summary and `orchestratorParts` parts (three
+by default, at most four), each with a title, a goal, a "done when" condition and the files it expects
+to touch. The split appears in the feed as a **Plan** card, so you see the parts before anything is
+edited. If the planner does not produce a readable plan, Artel asks once more and then fails the run —
+nothing has been edited.
+
+**2. One copy and two agents per part.** For each part Artel makes a separate copy of the project and
+starts two agents in it: the part agent does the work, and a reviewer — read-only — reads that part's
+changes and compares them with the written conditions. When the part agent finishes, the reviewer
+either accepts the part or returns it for rework and lists the problems. A returned part goes back to
+its agent with those problems; a part may be returned at most twice, after that it is accepted with
+the reviewer's remarks on record. Part agents work in parallel, in separate copies, so they cannot
+overwrite each other; the planner and the reviewers never edit anything.
+
+**3. Assembly.** When every part is accepted, Artel writes the accepted changes into one assembled
+copy. Files that only one part changed go in as they are; files that several parts changed are a
+conflict and go to a merger agent, which resolves them where they belong. Artel then checks that every
+conflicted file really differs from the original before the run is handed to you. A merge that cannot
+be finished fails the run with the merge recorded: the assembled copy stays readable for the diff, but
+**Apply** is refused until you discard the run.
+
+**The decision is yours.** When the assembly is finished, the run ends **Waiting for you**: the
+**Changes** card shows the diff of the assembled copy and only your **Apply** writes it into your
+project. The **Parts** card on the run page lists the parts with their status (working, in review,
+back for rework, accepted) and the plan's done conditions, so you can see what was verified and what
+the reviewer asked for. Part copies are deleted as soon as the parts are assembled.
+
+Orchestrator needs no subagent stack: every agent is an ordinary session, titled after its part —
+`Artel · Orchestrator · <agent> — <task>` for the planner, `Artel · Part N — <title> · <agent> — <task>`
+for a part agent, `Artel · Review · Part N — <title> · <agent> — <task>` for its reviewer and
+`Artel · Merge · <agent> — <task>` for the merger. While the planner is splitting the goal the run is
+in **Planning** and messages are refused; after that the normal message rules apply.
+
+## Auto-queue
+
+Every chat session has its own queue, and the **Waiting** column of the panel is where it lives. Write
+the next task into "What to do next…" and press **Add**: the task joins the queue instead of starting a
+run, and it can be given its own mode (Solo, Swarm, Conductor or Fusion) and model. The queue belongs to
+the session, so another chat stacks its own tasks; a chat message sent while the queue runs does not
+interrupt the agent — it becomes the first task.
+
+Flip **Auto-queue** to run the stack unattended, one task after another. The queue only matters while the
+toggle is on: with it off a task waits in the **Waiting** column and nothing starts. Before the first task
+the pre-flight shows what is about to happen: the check command and the task limit, and any earlier
+versions that were never saved or parked — you decide for each one whether to save it as a version or park
+it. The check command is guessed from the project's manifests (**Guessed from the project**) and can be
+replaced by hand or switched off with **Without a check**; with no usable command the version is saved on
+the agent's word and marked as such. The limit ("No more than N tasks per run", twenty by default) caps
+how many tasks one night takes.
+
+An auto-queue task runs under the night-shift rules, which the agent receives on every turn: it is a fresh
+worker per task, nobody will answer, so it makes the smallest reasonable assumption and records it instead
+of asking. The first question of a task is answered for it — "decide yourself and record the assumption" —
+and a second question parks the task. The agent never sends anything outward (no push, pull request,
+publish, deploy, tracker comment or message outside the machine), never raises a preview and never starts a
+long-running dev server, stays in its copy, runs the project's checks and ends with a short summary of what
+it changed, checked and assumed.
+
+A finished task must pass the check before it becomes a version. A failed check is sent back to the same
+worker as a fix attempt, at most twice; the task then either passes and is saved as a version, or is
+parked. A version is an ordinary Artel version: the next task starts from the last successful one, so the
+queue builds on its own result, while the diff base stays the real project, so you still review and apply a
+version exactly like a manual run.
+
+**Parked** collects the tasks that cannot pass unattended: the check failed after two fixes, the diff
+contains a secret or junk, the agent tried to publish outward, or the agent reported that it is blocked. A
+parked task is labelled with a
+`vf/parked-…` branch name, keeps its partial copy, can be returned to the queue to continue from it, and
+does not stop the rest — the queue takes the next task. A subscription limit only pauses the queue and it
+resumes after the reset; a lost login ends it.
+
+**Stop** interrupts the agent and parks the partial work, **Finish after the current task** lets the
+current task pass its check and then stops, and switching **Auto-queue** off stops taking new tasks. The
+queue ends by itself when it is empty, when the task limit is reached, after three parks in a row, when the
+login is lost, or when the disk is nearly full. The **Auto-queue results** card then shows the versions it
+saved with their checks, the parked tasks with their reasons and the tasks that were not taken.
+
+## Factory
+
+The **Factory** turns a project into a ticket pipeline: a board keeps the tickets of one project, and
+agents move each ticket from **Incoming** to **Ready for PR** without you; **Done** comes after you open
+the pull request or merge the result. Open it with **Open the Factory**,
+create a board for the project with **Create a board**, and switch it on with **Enable** — a board can only
+be enabled after **Check readiness** passes. A paused board stops taking new tickets:
+**Pause** stops new tickets while started ones finish, **Resume** returns it.
+
+Readiness blocks on three things: the project is a git repository, it has at least one commit (the Factory
+diffs against it) and at least one engine is logged in. A test command (or the project's suggested one), a
+preview command and Playwright are reported in the list but do not block. If no test command is
+configured, the board's check command and then the suggested one are used; without a usable command the
+tests stage is skipped with a note.
+
+The board shows seven columns — **Incoming**, **Triage**, **Working**, **Checks**, **Ready for PR**,
+**Waiting for you**, **Done** — while the pipeline behind them has nine stages: incoming, triage, working,
+tests, check, review, ready, waiting and done. **Checks** collapses the tests, app check and review stages.
+
+**Incoming.** File a ticket with **Title**, **Description** and **Files and screenshots** (**Attach**),
+add it with **Add the ticket**, or import a GitHub issue with **From a GitHub issue** — `#12`,
+`owner/repo#12` or the issue URL through `gh`, never twice. Trackers (GitHub, GitLab, Jira, Linear) are
+polled every five minutes when the board has them, with optional comment back; **Poll trackers now**
+checks at once.
+
+**Triage.** A read-only agent reads the project and the ticket and answers with a spec, acceptance
+criteria, assumptions and a route. It proposes the cheapest sufficient route out of the allowed ones
+(Solo, Swarm, Fusion, Orchestrator); the Factory may only cheapen that route, never upgrade it. Questions
+go to **Waiting for you**: answer them with **Answer** and the ticket returns to triage. **Spec**,
+**Criteria** and **Route** are then shown on the ticket.
+
+**Working.** The ticket starts an ordinary Artel run of its route, under the same night-shift rules as an
+auto-queue task; the first question is answered for it and a second sends the ticket to **Waiting for you**.
+On an Orchestrator route the run stops after the plan and waits for **Approve the plan**.
+
+**Tests** runs the board's test command and returns a failure to work with the output. **App check** runs
+the preview and looks at the result in a read-only copy — only for UI tickets, only when the template
+wants it, and only when a preview command and Playwright are configured. **Review** has one or two
+reviewers read the ticket's diff against its criteria. A failed test command, app check or review becomes
+a repair round back in **Working** with the findings, up to the template's limit; when the rounds are out
+the ticket waits for you. A ticket that passes review moves to **Ready for PR**.
+
+Templates: **Normal** — tests, app check and review, up to two repair rounds; **Fast** — no app check and
+one repair round, for small tickets; **Strict** — two reviewers and up to three repair rounds. **Waiting
+for you** collects triage questions, an orchestrator plan waiting for approval, exhausted repair rounds,
+an interrupted ticket, a run with nothing to work on and tickets you postponed with **Postpone**; **One
+more round** and **Accept as is** decide an exhausted ticket, and **Return to the factory** sends a ticket
+you changed back through triage. The board and every ticket keep a journal of what happened.
+
+**Ready for PR** offers three actions. **Pull Request** requires a clean working tree and a remote: it
+creates the branch `factory/ticket-<number>`, applies the ticket's run to the real project, commits,
+pushes and calls `gh pr create` with a body built from the spec, criteria, checks, assumptions and review
+notes; the link is commented back into the tracker when the board asks for it. **Merge** applies the
+ticket's cumulative diff to the project without a branch or a push. **Return with a comment** sends the
+ticket back to work with your comment as a repair turn. **Open the session** attaches to the ticket's
+session for a manual takeover. The Factory never sends anything outward by itself: push, pull request and
+comments happen only when you press the button.
+
+Settings per board: models per role (**Triage**, **Work**, **Tests**, **Review**), **Allowed routes**,
+**Spend ceiling** (**Tickets at once**, **Tickets per day**, **Workers per ticket**, **Allow the «API»
+engine**, **Allow nearly-exhausted subscriptions**), **Commands** (**Test command**, **Check command**,
+**Preview command**), the "Append tests when the change touches none" quirk and **Ticket intake**
+(trackers with their kind, label, project/URL and comment back).
+
 ## The run page
 
 The selected run's page opens on the right: the task at the top, the mode tag (**Solo**, **Swarm**,
-**Conductor** or **Fusion**), the status, a tag with the number of changed files (once there are any)
-and a phase line — the same short stage description as in the rail.
+**Conductor**, **Fusion** or **Orchestrator**), the status, a tag with the number of changed files (once
+there are any) and a phase line — the same short stage description as in the rail.
 
 Run statuses: **Preparing**, **Planning**, **Working**, **Waiting for you**, **Finished**,
 **Stopped**, **Failed**, **Applied**, **Discarded**.
+
+While the run is active or waiting, the header also says what it waits for — «Waiting for your
+answer», «Waiting for plan approval», «Waiting for Nova», «The agents are working», «Assembling the
+result» — and how long it has been waiting; a tag next to it sums the tokens the whole run has spent
+(hover it for input, output and cache). Under the header the **Right now** strip lists every agent:
+its state dot, the last step — the tool call it is running (`write src/app.js`) or «writing a
+reply» — the time spent on the current turn and how full its context window is, in tokens and
+percent, with the composition (system, tools, messages) in the tooltip. All of it is part of the run
+summary the Host already sends, so it costs no extra request.
 
 ![The run page: agent replies and grouped tool calls](artel-in-chat/screens/run.png)
 
@@ -218,10 +379,15 @@ it back to work.
 
 - Full agent replies: an avatar with the initial, the name, the role and the time; the text is
   rendered as markdown.
-- Tool calls are grouped into compact rows: the tool name and the file path or command.
+- Tool calls are grouped into compact rows: the tool name and the file path or command. A row with
+  more to tell — the arguments the agent passed and the output (or the error) the tool returned — is
+  a button: it expands onto both and the chevron turns down; **Collapse all** closes every open row.
+  Rows that only repeat the name, like `read README.md`, stay plain.
 - Status rows with a timestamp and a **Plan** card with the split of work. In Conductor mode the
   **Plan** card also carries the conductor's decisions: the handed-out shares, the rework round and the
-  acceptance. In Fusion mode it carries the judge's merged decision and the disputed places count.
+  acceptance. In Fusion mode it carries the judge's merged decision and the disputed places count. In
+  Orchestrator mode it carries the planner's split with the done conditions, the reviewer's verdict on
+  every part and the assembly card; the **Parts** card above the diff lists the parts and their status.
 - Your messages: a bubble labelled "You → Everyone" or "You → <agent>".
 - Agents talking to each other: the sender's name, an arrow and the message text.
 - **Edit collision** when two agents touched one path; **Error** when an agent's turn failed. Both
@@ -239,7 +405,10 @@ copy is still neither applied nor discarded. In Conductor mode a message is refu
 is deciding the shares, reviewing the copy or handing a share over — the feed says "The conductor is
 deciding. Wait for the next stage." — and writing works again from the next stage. In Fusion mode you
 can message only the agents of the active stage: the panel while it answers, the judge while it merges,
-and the implementer once the work starts.
+and the implementer once the work starts. In Orchestrator mode messages are refused while the planner
+is splitting the goal ("Wait until the planner splits the goal into parts") and while a stopped merge is
+still unfinished ("The merge was stopped. Discard the run and plan it again."); otherwise writing works
+as usual.
 
 ## Changes: apply or discard
 
@@ -271,15 +440,25 @@ the state it had when the run started:
   project during the run" — and writes nothing, so you can decide again.
 - A file that appeared in the project during the run is rejected the same way.
 
+In Orchestrator mode **Apply** has one more gate: the parts must be assembled first. If you stopped the
+run in the middle of the merge, or the merger could not resolve a file that several parts changed,
+**Apply** is refused and the card says the merge is not finished — the assembled copy stays readable,
+but the only way forward is **Discard** and a new run.
+
 An apply is final: the run becomes **Applied**, its changes are in the project, and the isolated copy is
 deleted right away. The diff stays in the run feed, so you can still read what changed.
 
 ## Where the data lives
 
 - Copies: `<DSH home>/artel/<profile>/copies/<run id>` — deleted when the run is applied or discarded; a
-  copy left behind by a crash is removed at the next start.
+  copy left behind by a crash is removed at the next start. An Orchestrator run keeps one copy per part
+  (`<run id>-p1`, `<run id>-p2`, …) until the parts are assembled, then only the assembled `<run id>`
+  copy remains.
 - Run index and feeds: `<DSH home>/artel/<profile>/state/runs` — a JSON index and one JSONL file per
   run, with a size limit.
+- Auto-queue and Factory: `<DSH home>/artel/<profile>/state/queue/<session>.json` (one queue per chat
+  session), `.../state/tickets/boards.json` (ticket boards) and `.../state/attachments/<board>/<ticket>/`
+  (ticket files).
 - Agent conversations: ordinary DSH sessions in your session store.
 
 Artel keeps at most `maxRunsPerSession` runs per session: the oldest finished runs (applied,

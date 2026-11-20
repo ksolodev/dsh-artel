@@ -41,9 +41,16 @@ class FakeDriver {
   }
   /** Routes written through `selectModel`. */
   selections = []
+  /** Live Host numbers per agent session, keyed like the real driver. */
+  stats = new Map()
 
   async listModels() {
     return this.models
+  }
+
+  /** What the real driver reads from the Host token meter and the usage reports. */
+  statsOf(handle) {
+    return this.stats.get(handle.sessionId) ?? { context: null, usage: null }
   }
 
   async selectModel(handle, selection) {
@@ -232,6 +239,89 @@ test('the run phase tracks the latest status line, even on terminal runs', async
     const applied = f.engine.listRuns('s1')[0]
     assert.equal(applied.status, 'applied')
     assert.equal(applied.phase, 'Applied 1 file to your project.', 'the terminal run still keeps its last phase')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('the run summary says what each agent is doing and what the run waits for', async () => {
+  const f = await fixture('live-view')
+  try {
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Change the answer' })
+    const handle = f.driver.created[0]
+
+    let summary = f.engine.getRun(run.id)
+    assert.equal(summary.agents[0].activity, null, 'a fresh agent has done nothing yet')
+    assert.equal(summary.agents[0].turns, 0)
+    assert.deepEqual(
+      { kind: summary.waitingFor.kind, names: summary.waitingFor.names },
+      { kind: 'agents', names: ['Vega'] },
+      'a starting agent is what the run waits on',
+    )
+    assert.equal(summary.spend, null, 'no provider usage yet, so no spend is invented')
+
+    f.driver.stats.set(handle.sessionId, {
+      context: { tokens: 40_000, window: 128_000, breakdown: { system: 900, tools: 2_500, messages: 6_000 }, at: 1 },
+      usage: { inputTokens: 1_000, outputTokens: 200, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 1_200, requests: 1 },
+    })
+    await f.driver.emit(handle, { kind: 'turn-start' })
+    summary = f.engine.getRun(run.id)
+    assert.equal(summary.agents[0].status, 'working')
+    assert.equal(summary.agents[0].turns, 1)
+    assert.equal(typeof summary.agents[0].turnStartedAt, 'number')
+    assert.equal(summary.agents[0].stats.context.tokens, 40_000)
+    assert.deepEqual(summary.agents[0].stats.context.breakdown, { system: 900, tools: 2_500, messages: 6_000 })
+    assert.equal(summary.spend.totalTokens, 1_200, 'the run spend is the sum of what the provider billed')
+    assert.equal(summary.spend.requests, 1)
+    assert.deepEqual(summary.waitingFor.names, ['Vega'], 'the open turn is what the user is waiting on')
+    assert.equal(summary.waitingFor.kind, 'agents')
+
+    await f.driver.emit(handle, { kind: 'tool', tool: 'write', text: 'write src/app.js', path: 'src/app.js' })
+    summary = f.engine.getRun(run.id)
+    assert.deepEqual(summary.agents[0].activity, {
+      kind: 'tool',
+      tool: 'write',
+      text: 'write src/app.js',
+      at: summary.agents[0].activity.at,
+    })
+
+    await f.driver.emit(handle, { kind: 'assistant', text: 'Now the README.' })
+    summary = f.engine.getRun(run.id)
+    assert.deepEqual(summary.agents[0].activity, {
+      kind: 'assistant',
+      text: 'Now the README.',
+      at: summary.agents[0].activity.at,
+    })
+
+    await f.driver.emit(handle, { kind: 'turn-end' })
+    summary = f.engine.getRun(run.id)
+    assert.equal(summary.agents[0].activity, null, 'an idle agent is doing nothing')
+    assert.equal(summary.agents[0].turnStartedAt, null)
+    assert.equal(summary.waitingFor.kind, 'user', 'the turn is over, so the run waits for you')
+    assert.equal(summary.status, 'waiting')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('a run parked at the plan gate says it waits for approval', async () => {
+  const f = await fixture('live-approval')
+  try {
+    const run = await f.engine.start({
+      sessionId: 's1',
+      projectPath: f.projectPath,
+      mode: 'orchestrator',
+      task: 'Rework the demo app',
+      planApproval: true,
+    })
+    await runTurn(f.driver, f.driver.created[0], ORCH_PLAN)
+    const planned = latestRun(f)
+    assert.equal(planned.status, 'waiting')
+    assert.equal(planned.waitingFor.kind, 'approval', 'the header must say approval, not a generic wait')
+    assert.equal(typeof planned.waitingFor.since, 'number')
+    assert.equal(planned.agents[0].activity, null, 'the planner finished its turn')
   } finally {
     await f.engine.dispose()
     await f.cleanup()
@@ -1339,6 +1429,516 @@ test('fusion messages reach only the active stage', async () => {
     assert.deepEqual(broadcastPrompts.map((entry) => entry.agent), ['Vega', 'Orion', 'Lyra'], 'everyone means the panel only')
     assert.ok(broadcastPrompts.every((entry) => /Show the trade-offs too/.test(entry.text)))
     assert.equal(latestRun(f).agents[3].name, 'Atlas', 'the judge was not prompted')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+/* ----------------------------------------------------------- orchestrator */
+
+const ORCH_PLAN = [
+  'PLAN: Rework the demo app in two parts.',
+  'PART 1: Core change',
+  'GOAL: The answer becomes 2 in src/app.js.',
+  'DONE: src/app.js exports answer 2; the existing call sites still work',
+  'FILES: src/app.js',
+  'PART 2: Docs',
+  'GOAL: The README explains the answer.',
+  'DONE: README.md mentions the new answer',
+  'FILES: README.md',
+].join('\n')
+
+/** Start an Orchestrator run in the fixture's project. */
+async function startOrchestrator(f, task = 'Rework the demo app') {
+  return f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'orchestrator', task })
+}
+
+/** Let the planner write the two-part plan and wait until the parts exist. */
+async function planOrchestrator(f) {
+  const run = await startOrchestrator(f)
+  await runTurn(f.driver, f.driver.created[0], ORCH_PLAN)
+  return run
+}
+
+test('orchestrator start: one planner reads the project, no copy is made yet', async () => {
+  const f = await fixture('orchestrator-start')
+  try {
+    const run = await startOrchestrator(f)
+    assert.equal(run.mode, 'orchestrator')
+    assert.equal(run.status, 'planning')
+    assert.equal(run.agents.length, 1, 'only the planner exists before the plan')
+    assert.equal(run.agents[0].role, 'planner')
+    assert.equal(run.agents[0].name, 'Vega')
+    assert.equal(run.agents[0].kind, 'session')
+    assert.equal(f.driver.created.length, 1)
+    assert.equal(f.driver.members.length, 0, 'orchestrator agents are ordinary sessions')
+    assert.equal(f.driver.created[0].copyPath, f.projectPath, 'the planner reads the real project')
+    assert.equal(f.driver.created[0].sandboxMode, 'read-only', 'the planner can never write to the project')
+    assert.deepEqual(await fs.readdir(f.copyRoot).catch(() => []), [], 'no copy before the plan is known')
+    assert.match(f.driver.prompts[0].text, /Rework the demo app/)
+    assert.match(f.driver.prompts[0].text, /PLAN:/)
+    assert.ok((await feedOf(f, run.id)).some((event) => event.kind === 'status' && event.text === 'Vega is reading the project and splitting the goal into parts. Nothing is edited in this step.'))
+
+    const refused = (error) => error instanceof ArtelError && error.status === 409 && error.code === 'artel/planning'
+    await assert.rejects(() => f.engine.message(run.id, { text: 'hello' }), refused, 'the planner owns the conversation until the plan exists')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('orchestrator: one copy per part, a reviewer per copy, rework and one assembly', async () => {
+  const f = await fixture('orchestrator-happy')
+  try {
+    const run = await planOrchestrator(f)
+    let latest = latestRun(f)
+    assert.equal(latest.status, 'running')
+    assert.equal(latest.plan.summary, 'Rework the demo app in two parts.')
+    assert.deepEqual(latest.plan.parts.map((part) => part.title), ['Core change', 'Docs'])
+    assert.deepEqual(latest.plan.parts.map((part) => part.status), ['working', 'working'])
+    assert.deepEqual(latest.plan.parts.map((part) => part.workerName), ['Orion', 'Atlas'])
+    assert.deepEqual(latest.plan.parts.map((part) => part.reviewerName), ['Lyra', 'Nova'])
+    assert.deepEqual(latest.agents.map((agent) => agent.role), ['planner', 'part', 'reviewer', 'part', 'reviewer'])
+    assert.deepEqual(f.driver.created.map((handle) => handle.sandboxMode), ['read-only', undefined, 'read-only', undefined, 'read-only'])
+    const p1 = path.join(f.copyRoot, `${run.id}-p1`)
+    const p2 = path.join(f.copyRoot, `${run.id}-p2`)
+    assert.ok(await fs.stat(p1))
+    assert.ok(await fs.stat(p2))
+    assert.equal(await fs.readFile(path.join(f.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 1\n', 'the user project is untouched')
+
+    const afterPlan = await feedOf(f, run.id)
+    assert.ok(afterPlan.some((event) => event.kind === 'plan' && event.text.startsWith('Plan: Rework the demo app in two parts.')))
+    assert.ok(afterPlan.some((event) => event.kind === 'status' && event.text === 'Preparing 2 copies of the project, one per part.'))
+    assert.ok(afterPlan.some((event) => event.kind === 'status' && event.text === '2 agents are working on 2 parts in separate copies. The user project is untouched.'))
+    const workerPrompt = f.driver.prompts.find((entry) => entry.agent === 'Orion')
+    assert.match(workerPrompt.text, /Core change/)
+    assert.match(workerPrompt.text, /src\/app\.js/)
+
+    // First part: the worker edits its own copy, the reviewer accepts it.
+    await fs.writeFile(path.join(p1, 'src', 'app.js'), 'export const answer = 2\n')
+    await runTurn(f.driver, f.driver.handleFor('Orion'), 'Changed the answer to 2.')
+    const reviewPrompt = f.driver.prompts.find((entry) => entry.agent === 'Lyra')
+    assert.ok(reviewPrompt !== undefined)
+    assert.match(reviewPrompt.text, /src\/app\.js/)
+    assert.match(reviewPrompt.text, /VERDICT:/)
+    assert.ok((await feedOf(f, run.id)).some((event) => event.kind === 'status' && event.text === 'Part 1 — Core change: Orion is done; Lyra is checking the copy against the plan.'))
+    await runTurn(f.driver, f.driver.handleFor('Lyra'), 'VERDICT: accept — the plan conditions are met.')
+    latest = latestRun(f)
+    assert.equal(latest.plan.parts[0].status, 'accepted')
+    assert.equal(latest.status, 'running', 'the run waits for the second part')
+    assert.ok((await feedOf(f, run.id)).some((event) => event.kind === 'status' && event.text === 'Part 1 — Core change: accepted — the plan conditions are met.'))
+
+    // Second part: the reviewer sends it back once, the worker fixes it, the
+    // second review accepts it.
+    const readme = path.join(p2, 'README.md')
+    await fs.writeFile(readme, '# Demo\n\nThe answer is 1.\n')
+    await runTurn(f.driver, f.driver.handleFor('Atlas'), 'Documented the answer.')
+    await runTurn(f.driver, f.driver.handleFor('Nova'), 'VERDICT: rework — the README does not mention the new answer.\nPROBLEMS:\n- README still says the answer is 1')
+    latest = latestRun(f)
+    assert.equal(latest.plan.parts[1].status, 'rework')
+    assert.equal(latest.plan.parts[1].rounds, 1)
+    assert.equal(latest.plan.parts[1].remarks, 'README still says the answer is 1')
+    const reworkPrompts = f.driver.prompts.filter((entry) => entry.agent === 'Atlas')
+    assert.match(reworkPrompts.at(-1).text, /README still says the answer is 1/)
+    const reworkFeed = await feedOf(f, run.id)
+    assert.ok(reworkFeed.some((event) => event.kind === 'status' && event.text === 'Part 2 — Docs: sent back to Atlas (rework 1 of 2).'))
+    assert.ok(reworkFeed.some((event) => event.kind === 'status' && event.text === 'Part 2 — Docs review: README still says the answer is 1'))
+    assert.equal(f.driver.prompts.filter((entry) => entry.agent === 'Nova').length, 1)
+
+    await fs.writeFile(readme, '# Demo\n\nThe answer is 2.\n')
+    await runTurn(f.driver, f.driver.handleFor('Atlas'), 'README now says the answer is 2.')
+    assert.equal(f.driver.prompts.filter((entry) => entry.agent === 'Nova').length, 2, 'the reworked part is reviewed again')
+    await runTurn(f.driver, f.driver.handleFor('Nova'), 'VERDICT: accept — the README matches the new answer.')
+
+    latest = latestRun(f)
+    assert.equal(latest.status, 'waiting')
+    assert.equal(latest.merge.merged, true)
+    assert.deepEqual(latest.merge.unresolved, [])
+    assert.ok(latest.plan.parts.every((part) => part.status === 'accepted'))
+    assert.equal(latest.changeCount, 2)
+    assert.deepEqual((await f.engine.changes(run.id)).map((change) => change.path), ['README.md', 'src/app.js'])
+    const finalFeed = await feedOf(f, run.id)
+    assert.ok(finalFeed.some((event) => event.kind === 'plan' && /The parts are assembled in one copy\./.test(event.text)))
+    assert.ok(finalFeed.some((event) => event.kind === 'status' && event.text === 'The work is assembled in one copy. Review the diff and apply it, or discard the run.'))
+    assert.deepEqual(await fs.readdir(f.copyRoot), [run.id], 'the part copies are gone, the assembly stays')
+
+    const applied = await f.engine.apply(run.id)
+    assert.deepEqual(applied.applied, ['README.md', 'src/app.js'])
+    assert.equal(await fs.readFile(path.join(f.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 2\n')
+    assert.equal(await fs.readFile(path.join(f.projectPath, 'README.md'), 'utf8'), '# Demo\n\nThe answer is 2.\n')
+    assert.equal(latestRun(f).status, 'applied')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+/** Accept both parts editing the same file with different content. */
+async function conflictOrchestrator(f) {
+  const run = await planOrchestrator(f)
+  const p1 = path.join(f.copyRoot, `${run.id}-p1`)
+  const p2 = path.join(f.copyRoot, `${run.id}-p2`)
+  await fs.writeFile(path.join(p1, 'src', 'app.js'), 'export const answer = 2\n')
+  await runTurn(f.driver, f.driver.handleFor('Orion'), 'Answer is 2.')
+  await runTurn(f.driver, f.driver.handleFor('Lyra'), 'VERDICT: accept — done.')
+  await fs.writeFile(path.join(p2, 'src', 'app.js'), 'export const answer = 3\n')
+  await runTurn(f.driver, f.driver.handleFor('Atlas'), 'Answer is 3.')
+  await runTurn(f.driver, f.driver.handleFor('Nova'), 'VERDICT: accept — done.')
+  return run
+}
+
+test('orchestrator: overlapping edits wait for the merger and then apply', async () => {
+  const f = await fixture('orchestrator-conflict')
+  try {
+    const run = await conflictOrchestrator(f)
+    const pending = latestRun(f)
+    assert.equal(pending.status, 'running', 'the run is not published before the merge is decided')
+    assert.equal(pending.merge.merged, false)
+    assert.deepEqual(pending.merge.unresolved, ['src/app.js'])
+    assert.equal(pending.merge.conflicts[0].path, 'src/app.js')
+    assert.equal(pending.merge.conflicts[0].parts.length, 2)
+    assert.equal(await fs.readFile(path.join(run.copyPath, 'src', 'app.js'), 'utf8'), 'export const answer = 1\n', 'the conflicting file stays at its base version until the merger decides')
+    assert.ok(await fs.stat(path.join(run.copyPath, '.dsh-artel', 'conflicts', '01', 'path.txt')))
+    assert.ok((await feedOf(f, run.id)).some((event) => event.kind === 'status' && event.text === '1 file(s) were edited by more than one part (src/app.js). Rhea is resolving them.'))
+    assert.equal(f.driver.handleFor('Rhea').copyPath, run.copyPath, 'the merger works in the assembly copy')
+
+    await fs.writeFile(path.join(run.copyPath, 'src', 'app.js'), 'export const answer = 2\n')
+    await runTurn(f.driver, f.driver.handleFor('Rhea'), 'Both parts wanted an answer change; kept 2.')
+    const assembled = latestRun(f)
+    assert.equal(assembled.status, 'waiting')
+    assert.equal(assembled.merge.merged, true)
+    assert.deepEqual(assembled.merge.unresolved, [])
+    assert.ok((await feedOf(f, run.id)).some((event) => event.kind === 'plan' && /Conflicts resolved by the merger: 1\./.test(event.text)))
+
+    await f.engine.apply(run.id)
+    assert.equal(await fs.readFile(path.join(f.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 2\n')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('orchestrator: a merger that cannot decide fails the run and blocks apply', async () => {
+  const f = await fixture('orchestrator-merge-unresolved')
+  try {
+    const run = await conflictOrchestrator(f)
+    const merger = f.driver.handleFor('Rhea')
+    await runTurn(f.driver, merger, 'I cannot decide between the two answers.')
+    assert.ok((await feedOf(f, run.id)).some((event) => event.kind === 'status' && event.text === 'The merger left 1 file(s) unresolved (src/app.js). Asking once more.'))
+    assert.equal(latestRun(f).status, 'running')
+    const mergerPrompts = f.driver.prompts.filter((entry) => entry.agent === 'Rhea')
+    assert.equal(mergerPrompts.length, 2)
+    assert.match(mergerPrompts[1].text, /src\/app\.js/)
+
+    await runTurn(f.driver, merger, 'Still not sure.')
+    assert.equal(latestRun(f).status, 'failed')
+    assert.equal(f.store.get(run.id).error, 'The merge could not be finished: 1 file(s) still need a decision (src/app.js). The assembled copy is kept.')
+    assert.deepEqual(f.store.get(run.id).merge.unresolved, ['src/app.js'])
+    const blocked = (error) => error instanceof ArtelError && error.status === 409 && error.code === 'artel/merge-incomplete'
+    await assert.rejects(() => f.engine.apply(run.id), blocked)
+    assert.equal(await fs.readFile(path.join(f.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 1\n', 'nothing reached the project')
+    assert.deepEqual(await fs.readdir(f.copyRoot), [run.id], 'the assembly is kept for the diff, the part copies are gone')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('orchestrator: stopping the run during the merge keeps apply blocked', async () => {
+  const f = await fixture('orchestrator-merge-stop')
+  try {
+    const run = await conflictOrchestrator(f)
+    const stopped = await f.engine.interrupt(run.id)
+    assert.equal(stopped.status, 'interrupted')
+    assert.deepEqual(f.store.get(run.id).merge.unresolved, ['src/app.js'])
+    assert.ok((await feedOf(f, run.id)).some((event) => event.kind === 'status' && /middle of the merge/.test(event.text)))
+    const blocked = (error) => error instanceof ArtelError && error.status === 409 && error.code === 'artel/merge-incomplete'
+    await assert.rejects(() => f.engine.apply(run.id), blocked)
+    assert.deepEqual(await fs.readdir(f.copyRoot), [run.id], 'the assembly stays, the part copies are gone')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('orchestrator: a stopped worker fails the run before anything is assembled', async () => {
+  const f = await fixture('orchestrator-worker-failure')
+  try {
+    const run = await planOrchestrator(f)
+    const orion = f.driver.handleFor('Orion')
+    await f.driver.emit(orion, { kind: 'turn-start' })
+    await f.driver.emit(orion, { kind: 'turn-end', reason: { kind: 'error' } })
+    const failed = latestRun(f)
+    assert.equal(failed.status, 'failed')
+    assert.equal(failed.plan.parts[0].status, 'failed')
+    assert.equal(f.store.get(run.id).error, 'Part 1 — Core change: Orion stopped (error). The parts were not assembled, so nothing reaches your project.')
+    assert.equal(await fs.readFile(path.join(f.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 1\n')
+    assert.deepEqual(await fs.readdir(f.copyRoot).catch(() => []), [], 'the per-part copies are gone and no assembly exists')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('orchestrator: an unreadable plan is asked once more, then the run fails', async () => {
+  const f = await fixture('orchestrator-bad-plan')
+  try {
+    const run = await startOrchestrator(f)
+    const planner = f.driver.handleFor('Vega')
+    await runTurn(f.driver, planner, 'I will just do it, no plan needed.')
+    assert.ok((await feedOf(f, run.id)).some((event) => event.kind === 'status' && event.text === 'The planner did not write a readable plan. Asking once more.'))
+    assert.equal(latestRun(f).status, 'planning')
+    assert.equal(f.driver.prompts.filter((entry) => entry.agent === 'Vega').length, 2)
+
+    await runTurn(f.driver, planner, 'Still no plan.')
+    assert.equal(latestRun(f).status, 'failed')
+    assert.equal(f.store.get(run.id).error, 'The planner could not split the goal into parts. Nothing was edited.')
+    assert.equal(await fs.readFile(path.join(f.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 1\n')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('orchestrator: two parts finish together and both reviews are taken', async () => {
+  const f = await fixture('orchestrator-overlapping-reviews')
+  try {
+    const run = await planOrchestrator(f)
+    const p1 = path.join(f.copyRoot, `${run.id}-p1`)
+    const p2 = path.join(f.copyRoot, `${run.id}-p2`)
+
+    // The first part reaches its reviewer...
+    await fs.writeFile(path.join(p1, 'src', 'app.js'), 'export const answer = 2\n')
+    await runTurn(f.driver, f.driver.handleFor('Orion'), 'Changed the answer to 2.')
+    assert.equal(f.driver.prompts.filter((entry) => entry.agent === 'Lyra').length, 1)
+
+    // ...and the second part finishes while that review is still open. It must
+    // start its own review instead of waiting for one shared slot.
+    await fs.writeFile(path.join(p2, 'README.md'), '# Demo\n\nThe answer is 2.\n')
+    await runTurn(f.driver, f.driver.handleFor('Atlas'), 'Documented the answer.')
+    assert.equal(f.driver.prompts.filter((entry) => entry.agent === 'Nova').length, 1, 'the second review starts in parallel')
+    assert.deepEqual(latestRun(f).plan.parts.map((part) => part.status), ['reviewing', 'reviewing'])
+
+    // The second reviewer answers first: its part is accepted, the first review
+    // stays open and must still produce a verdict afterwards.
+    await runTurn(f.driver, f.driver.handleFor('Nova'), 'VERDICT: accept — the README matches.')
+    let latest = latestRun(f)
+    assert.deepEqual(latest.plan.parts.map((part) => part.status), ['reviewing', 'accepted'])
+    assert.equal(latest.status, 'running')
+
+    await runTurn(f.driver, f.driver.handleFor('Lyra'), 'VERDICT: accept — the answer is 2.')
+    latest = latestRun(f)
+    assert.deepEqual(latest.plan.parts.map((part) => part.status), ['accepted', 'accepted'])
+    assert.equal(latest.status, 'waiting', 'both verdicts are taken and the work is assembled')
+    assert.equal(latest.merge.merged, true)
+    assert.deepEqual(latest.merge.unresolved, [])
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('orchestrator: stopping before the assembly keeps the part copies and the run can continue', async () => {
+  const f = await fixture('orchestrator-interrupt-parts')
+  try {
+    const run = await planOrchestrator(f)
+    const p1 = path.join(f.copyRoot, `${run.id}-p1`)
+    const stopped = await f.engine.interrupt(run.id)
+    assert.equal(stopped.status, 'interrupted')
+    assert.ok(await fs.stat(p1), 'the part copies stay, so the run can be resumed')
+    assert.ok((await feedOf(f, run.id)).some((event) => event.kind === 'status' && /part copies are still there/.test(event.text)))
+
+    const resumed = await f.engine.message(run.id, { text: 'Продолжайте.' })
+    assert.equal(resumed.status, 'running')
+    assert.equal(latestRun(f).status, 'running')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('orchestrator: a message after the assembly is refused', async () => {
+  const f = await fixture('orchestrator-message-assembled')
+  try {
+    const run = await planOrchestrator(f)
+    const p1 = path.join(f.copyRoot, `${run.id}-p1`)
+    const p2 = path.join(f.copyRoot, `${run.id}-p2`)
+    await fs.writeFile(path.join(p1, 'src', 'app.js'), 'export const answer = 2\n')
+    await runTurn(f.driver, f.driver.handleFor('Orion'), 'Changed the answer to 2.')
+    await runTurn(f.driver, f.driver.handleFor('Lyra'), 'VERDICT: accept — done.')
+    await fs.writeFile(path.join(p2, 'README.md'), '# Demo\n\nThe answer is 2.\n')
+    await runTurn(f.driver, f.driver.handleFor('Atlas'), 'Documented the answer.')
+    await runTurn(f.driver, f.driver.handleFor('Nova'), 'VERDICT: accept — done.')
+    assert.equal(latestRun(f).status, 'waiting')
+
+    const refused = (error) => error instanceof ArtelError && error.status === 409 && error.code === 'artel/bad-stage'
+    await assert.rejects(
+      () => f.engine.message(run.id, { text: 'Поменяй ответ на 3.' }),
+      refused,
+      'the part copies are gone; the assembled result goes to Apply or Discard',
+    )
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+
+/* ------------------------------------------------- new start options */
+
+/** Write a version directory with the given files, relative to the fixture root. */
+async function writeVersionDir(root, name, files) {
+  const dir = path.join(root, 'versions', name)
+  for (const [relative, content] of Object.entries(files)) {
+    const target = path.join(dir, relative)
+    await fs.mkdir(path.dirname(target), { recursive: true })
+    await fs.writeFile(target, content)
+  }
+  return dir
+}
+
+test('start with basePath: the copy is seeded from the version, the diff base stays the real project', async () => {
+  const f = await fixture('start-base-path')
+  try {
+    const versionDir = await writeVersionDir(f.root, 'v1', {
+      'src/app.js': 'export const answer = 2\n',
+      'README.md': '# Demo\n\nThe answer is 2.\n',
+    })
+    const run = await f.engine.start({
+      sessionId: 's1',
+      projectPath: f.projectPath,
+      mode: 'solo',
+      task: 'Continue the work',
+      basePath: versionDir,
+    })
+    assert.equal(run.basePath, path.resolve(versionDir), 'the summary names the seed copy')
+    assert.equal(run.autoqueue, false)
+    assert.equal(await fs.readFile(path.join(run.copyPath, 'src', 'app.js'), 'utf8'), 'export const answer = 2\n', 'the copy starts from the version, not the project')
+    assert.equal(await fs.readFile(path.join(run.copyPath, 'README.md'), 'utf8'), '# Demo\n\nThe answer is 2.\n')
+    assert.equal(await fs.readFile(path.join(f.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 1\n', 'the user project is untouched')
+    assert.ok((await feedOf(f, run.id)).some((event) => event.kind === 'status' && event.text === 'Copy ready: 2 files, seeded from the previous version.'), 'the feed names the seed')
+    const changes = await f.engine.changes(run.id)
+    assert.deepEqual(changes.map((change) => change.path), ['README.md', 'src/app.js'], 'the version content shows against the real project')
+    assert.equal(f.store.get(run.id).baseHashes['src/app.js'] !== undefined, true, 'the manifest was taken from the real project')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('start with a missing basePath: the run is refused and nothing is copied', async () => {
+  const f = await fixture('start-base-path-missing')
+  try {
+    const missing = path.join(f.root, 'versions', 'gone')
+    const refused = (error) => error instanceof ArtelError && error.status === 409 && error.code === 'artel/no-base-version'
+    await assert.rejects(
+      () => f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Continue the work', basePath: missing }),
+      refused,
+      'a version that was swept away is reported, not silently replaced',
+    )
+    assert.deepEqual(f.engine.listRuns('s1'), [], 'no run was recorded')
+    assert.deepEqual(await fs.readdir(f.copyRoot).catch(() => []), [], 'no copy was made')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('autoqueue: the first prompt carries the night-shift rules', async () => {
+  const f = await fixture('start-autoqueue')
+  try {
+    const run = await f.engine.start({
+      sessionId: 's1',
+      projectPath: f.projectPath,
+      mode: 'solo',
+      task: 'Build the settings screen',
+      autoqueue: true,
+    })
+    assert.equal(run.autoqueue, true, 'the run is marked as unattended')
+    assert.equal(latestRun(f).autoqueue, true)
+    const prompt = f.driver.prompts[0].text
+    assert.match(prompt, /Build the settings screen/)
+    assert.match(prompt, /UNATTENDED RUN/)
+    assert.match(prompt, /nobody will answer/)
+    assert.match(prompt, /Never send anything outward/)
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('sandboxMode is forwarded to the solo agent', async () => {
+  const f = await fixture('start-sandbox-mode')
+  try {
+    const run = await f.engine.start({
+      sessionId: 's1',
+      projectPath: f.projectPath,
+      mode: 'solo',
+      task: 'Inspect the project',
+      sandboxMode: 'read-only',
+    })
+    assert.equal(f.driver.created.length, 1)
+    assert.equal(f.driver.created[0].sandboxMode, 'read-only')
+    assert.equal(f.driver.created[0].copyPath, run.copyPath)
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('orchestrator planApproval: the plan waits for approvePlan before any copy or part', async () => {
+  const f = await fixture('orchestrator-plan-approval')
+  try {
+    const run = await f.engine.start({
+      sessionId: 's1',
+      projectPath: f.projectPath,
+      mode: 'orchestrator',
+      task: 'Rework the demo app',
+      planApproval: true,
+    })
+    assert.equal(run.planApproval, true)
+    assert.equal(run.planApproved, false)
+    assert.equal(run.status, 'planning')
+    const noPlanYet = (error) => error instanceof ArtelError && error.status === 400 && error.code === 'artel/no-plan'
+    await assert.rejects(() => f.engine.approvePlan(run.id), noPlanYet, 'there is no plan to approve before the planner answers')
+
+    await runTurn(f.driver, f.driver.created[0], ORCH_PLAN)
+    const planned = latestRun(f)
+    assert.equal(planned.status, 'waiting', 'the planner answer stops at the approval gate')
+    assert.equal(planned.plan.parts.length, 2, 'the plan is stored before the gate')
+    assert.deepEqual(planned.plan.parts.map((part) => part.status), ['pending', 'pending'])
+    assert.deepEqual(await fs.readdir(f.copyRoot).catch(() => []), [], 'nothing is copied before the approval')
+    assert.equal(f.driver.created.length, 1, 'only the planner exists before the approval')
+    const gateFeed = await feedOf(f, run.id)
+    assert.ok(gateFeed.some((event) => event.kind === 'plan'))
+    assert.ok(gateFeed.some((event) => event.kind === 'status' && event.text === 'The plan is ready. Nothing is copied and nothing is edited until you approve it.'))
+
+    const refused = (error) => error instanceof ArtelError && error.status === 409 && error.code === 'artel/plan-approval'
+    await assert.rejects(() => f.engine.message(run.id, { text: 'Start now' }), refused, 'a chat line is not an approval')
+
+    const approved = await f.engine.approvePlan(run.id)
+    assert.equal(approved.status, 'running')
+    assert.equal(approved.planApproved, true)
+    assert.deepEqual(approved.plan.parts.map((part) => part.status), ['working', 'working'])
+    assert.ok(await fs.stat(path.join(f.copyRoot, `${run.id}-p1`)))
+    assert.ok(await fs.stat(path.join(f.copyRoot, `${run.id}-p2`)))
+    assert.equal(f.driver.created.length, 5, 'the planner plus two workers and two reviewers')
+    assert.ok((await feedOf(f, run.id)).some((event) => event.kind === 'status' && event.text === 'The plan is approved. The parts are starting now.'))
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('approvePlan: an ordinary run and an unknown run are refused', async () => {
+  const f = await fixture('approve-plan-refused')
+  try {
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Change the answer' })
+    const noPlan = (error) => error instanceof ArtelError && error.status === 400 && error.code === 'artel/no-plan'
+    await assert.rejects(() => f.engine.approvePlan(run.id), noPlan, 'a solo run has no gated plan')
+    const unknown = (error) => error instanceof ArtelError && error.status === 404 && error.code === 'artel/unknown-run'
+    await assert.rejects(() => f.engine.approvePlan('fg-does-not-exist'), unknown)
   } finally {
     await f.engine.dispose()
     await f.cleanup()

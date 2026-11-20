@@ -302,6 +302,19 @@ const REVIEW_RUN = {
   changeCount: 0,
 }
 
+/** A saved auto-queue version: the history and the run header must mark it. */
+const AUTOQUEUE_RUN = {
+  ...DEFAULT_RUN,
+  id: 'run-auto',
+  mode: 'solo',
+  task: 'Ночная задача',
+  status: 'waiting',
+  phase: 'Готово',
+  autoqueue: true,
+  changeCount: 1,
+  copyPath: 'C:\\tmp\\copies\\run-auto',
+}
+
 const REVIEW_CHANGES = [
   {
     path: 'src/math.js',
@@ -332,6 +345,76 @@ const REVIEW_CHANGES = [
   },
   { path: 'assets/logo.png', status: 'binary', added: 0, removed: 0, binary: true, hunks: [] },
 ]
+
+/* ------------------------------------------------------- orchestrator (0.7.0) */
+
+const ORCHESTRATOR_PARTS = [
+  {
+    id: 'p1',
+    title: 'Настроить кнопку',
+    goal: 'Добавить кнопку на главный экран',
+    conditions: ['Кнопка видна на главном экране', 'Клик открывает диалог'],
+    files: ['src/app.js'],
+    status: 'accepted',
+    rounds: 0,
+    remarks: null,
+    workerName: 'Vega',
+    reviewerName: 'Rill',
+  },
+  {
+    id: 'p2',
+    title: 'Проверить стили',
+    goal: 'Подогнать стили под тему',
+    conditions: ['Стили совпадают с макетом'],
+    files: ['src/theme.css'],
+    status: 'reviewing',
+    rounds: 0,
+    remarks: null,
+    workerName: 'Nova',
+    reviewerName: 'Orion',
+  },
+  {
+    id: 'p3',
+    title: 'Обновить тесты',
+    goal: 'Добавить тест на кнопку',
+    conditions: ['Тест падает без кнопки'],
+    files: ['test/app.test.js'],
+    status: 'rework',
+    rounds: 1,
+    remarks: 'Проверяющему не хватило проверки на клавиатуру.',
+    workerName: 'Atlas',
+    reviewerName: 'Pax',
+  },
+]
+
+const ORCHESTRATOR_PLAN = { summary: 'Сначала кнопка, потом стили и тесты.', parts: ORCHESTRATOR_PARTS }
+
+const ORCHESTRATOR_RUN = {
+  ...DEFAULT_RUN,
+  id: 'run-orch',
+  mode: 'orchestrator',
+  task: 'Добавь кнопку и тесты',
+  status: 'waiting',
+  phase: 'Сборка',
+  changeCount: 0,
+  plan: ORCHESTRATOR_PLAN,
+  merge: { conflicts: [{ path: 'src/app.js', parts: ['p1', 'p2'] }], unresolved: [] },
+  agents: [
+    { id: 'o1', name: 'Metis', role: 'planner', status: 'idle' },
+    { id: 'o2', name: 'Vega', role: 'part', status: 'idle' },
+    { id: 'o3', name: 'Rill', role: 'reviewer', status: 'idle' },
+    { id: 'o4', name: 'Atlas', role: 'merger', status: 'idle' },
+  ],
+}
+
+/** A run the Host reports failed mid-merge: apply must stay closed. */
+const ORCHESTRATOR_BLOCKED_RUN = {
+  ...ORCHESTRATOR_RUN,
+  id: 'run-orch-blocked',
+  status: 'failed',
+  phase: 'Сборка не завершена',
+  merge: { conflicts: [{ path: 'src/app.js', parts: ['p1', 'p2'] }], unresolved: ['src/app.js'] },
+}
 
 function createRealm(options = {}) {
   const react = createReact()
@@ -831,6 +914,49 @@ test('pure view model helpers behave as the design requires', () => {
   assert.ok(debug.avatarTone('Vega') >= 0 && debug.avatarTone('Vega') < 8)
   assert.equal(debug.avatarTone('Vega'), debug.avatarTone('Vega'))
   assert.equal(debug.formatWhen(t, Date.now() - 5 * 60 * 1000), '5 мин назад')
+
+  // Right now: what each agent is doing, how long its turn runs, how full its
+  // context is, and what the run itself is waiting for.
+  assert.equal(debug.tokenCount(812), '812')
+  assert.equal(debug.tokenCount(4_200), '4.2K')
+  assert.equal(debug.tokenCount(128_000), '128K')
+  assert.equal(debug.tokenCount(1_300_000), '1.3M')
+  assert.equal(debug.tokenCount(undefined), '')
+
+  const agentWithContext = {
+    stats: {
+      context: { tokens: 40_000, window: 128_000, breakdown: { system: 900, tools: 2_500, messages: 6_000 } },
+      usage: null,
+    },
+  }
+  assert.equal(debug.contextShare(agentWithContext), 31)
+  assert.equal(debug.contextShare({ stats: { context: null } }), null)
+  assert.equal(debug.contextShare({}), null)
+  assert.deepEqual(debug.compositionOf(agentWithContext), { system: 900, tools: 2_500, messages: 6_000 })
+  assert.equal(debug.compositionOf({ stats: { context: { tokens: 1, window: 2 } } }), null)
+  assert.equal(debug.contextHint(t, agentWithContext), '40K из 128K токенов · 31% окна\nсистема 900 · инструменты 2.5K · сообщения 6K')
+  assert.equal(debug.contextHint(t, {}), '')
+
+  const started = Date.now() - 65 * 1000
+  assert.equal(debug.durationLabel(started), '1:05')
+  assert.equal(debug.durationLabel(Date.now() - 12_000), '12s')
+  assert.equal(debug.durationLabel(null), '')
+
+  assert.deepEqual(debug.activityOf({ activity: { kind: 'tool', tool: 'write', text: 'write src/app.js' } }), { kind: 'tool', tool: 'write', text: 'src/app.js' })
+  assert.deepEqual(debug.activityOf({ activity: { kind: 'assistant', text: 'Готово' } }), { kind: 'assistant', tool: '', text: 'Готово' })
+  assert.equal(debug.activityOf({}), null)
+
+  assert.equal(debug.waitingLabel(t, { waitingFor: { kind: 'user' } }), 'Ждёт вашего ответа')
+  assert.equal(debug.waitingLabel(t, { waitingFor: { kind: 'approval' } }), 'Ждёт утверждения плана')
+  assert.equal(debug.waitingLabel(t, { waitingFor: { kind: 'agents', names: ['Orion', 'Lyra'] } }), 'Ждём: Orion и Lyra')
+  assert.equal(debug.waitingLabel(t, { waitingFor: { kind: 'agents', names: ['Nova'] } }), 'Ждём: Nova')
+  assert.equal(debug.waitingLabel(t, { waitingFor: { kind: 'agents', names: ['A', 'B', 'C'] } }), 'Ждём: A, B, C')
+  assert.equal(debug.waitingLabel(t, { waitingFor: { kind: 'host' } }), 'Сводит результат')
+  assert.equal(debug.waitingLabel(t, {}), '')
+
+  assert.equal(debug.agentDotState({ status: 'working' }), 'ongoing')
+  assert.equal(debug.agentDotState({ status: 'idle' }), 'done')
+  assert.equal(debug.agentDotState({ status: 'failed' }), 'error')
 })
 
 test('store loads runs, persists the active run and starts new ones', async () => {
@@ -1279,6 +1405,7 @@ test('review run renders the changes card, expands a diff and applies', async ()
 
   const card = findByClass(opened, 'dsh-artel-changes')
   assert.ok(card !== undefined, 'changes card is rendered for an interrupted run')
+  assert.equal(findByClass(opened, 'dsh-artel-parts'), undefined, 'ordinary modes render no parts card')
   const cardText = textOf(card)
   assert.match(cardText, /Изменения · 3 файла/)
   assert.ok(cardText.includes('+12'), 'added lines total is shown')
@@ -1313,6 +1440,138 @@ test('review run renders the changes card, expands a diff and applies', async ()
 
   assert.match(textOf(findByClass(opened, 'dsh-artel-changes')), /Применено/)
   assert.ok(state.realm.calls.some((call) => call.pathname === '/api/dsh-artel/runs/run-review/apply' && call.method === 'POST'))
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('a tool call row expands onto its arguments and output', async () => {
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [DEFAULT_RUN],
+      feed: {
+        'run-1': [
+          {
+            seq: 1,
+            at: '2026-01-01T10:01:00Z',
+            kind: 'tool',
+            agent: 'Nova',
+            tool: 'write',
+            text: 'write src/app.js',
+            path: 'src/app.js',
+            callId: 'call-1',
+            args: '{\n  "path": "src/app.js"\n}',
+          },
+          { seq: 2, at: '2026-01-01T10:01:05Z', kind: 'tool-result', agent: 'Nova', callId: 'call-1', ok: true, text: 'wrote 12 bytes' },
+          { seq: 3, at: '2026-01-01T10:02:00Z', kind: 'tool', agent: 'Nova', tool: 'read', text: 'read README.md' },
+        ],
+      },
+    },
+  })
+  const tree = await renderLauncher(state)
+  findByClass(tree, 'dsh-artel-launcher').props.onClick()
+  await state.realm.settle()
+  let opened = await state.realm.renderer.flush()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+
+  const tools = findByClass(opened, 'dsh-artel-tools')
+  assert.ok(tools !== undefined, 'the tool calls are in the feed')
+  const head = findAll(tools, (node) => node.type === 'button' && node.props.className === 'dsh-artel-tool__head')
+  assert.equal(head.length, 1, 'only the call with something to show is a disclosure')
+  assert.equal(head[0].props['aria-expanded'], false)
+  assert.equal(findByClass(opened, 'dsh-artel-tool__code'), undefined, 'the payload stays hidden until asked for')
+
+  head[0].props.onClick()
+  opened = await state.realm.renderer.flush()
+  const openHead = findAll(opened, (node) => node.type === 'button' && node.props.className === 'dsh-artel-tool__head')[0]
+  assert.equal(openHead.props['aria-expanded'], true, 'the row reports its state to assistive tech')
+  const codes = findAll(opened, (node) => node.props?.className === 'dsh-artel-tool__code').map(textOf)
+  assert.equal(codes.length, 2)
+  assert.match(codes[0], /"path": "src\/app\.js"/)
+  assert.equal(codes[1].trim(), 'wrote 12 bytes', 'the output of the call is shown, not just its name')
+  assert.ok(findButton(findByClass(opened, 'dsh-artel-tools'), 'Свернуть все') !== undefined, 'one click collapses every open row')
+
+  const collapse = findButton(findByClass(opened, 'dsh-artel-tools'), 'Свернуть все')
+  collapse.props.onClick()
+  opened = await state.realm.renderer.flush()
+  assert.equal(findByClass(opened, 'dsh-artel-tool__code'), undefined, 'collapsing all hides the payload again')
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('the live strip says what each agent does and what the run waits for', async () => {
+  const turnStart = Date.now() - 65_000
+  const liveRun = {
+    ...DEFAULT_RUN,
+    waitingFor: { kind: 'agents', names: ['Nova'], since: Date.now() - 90_000 },
+    spend: { inputTokens: 9_000, outputTokens: 2_000, cacheReadTokens: 1_000, cacheWriteTokens: 0, totalTokens: 12_000, requests: 4 },
+    agents: [
+      { id: 'a1', name: 'Vega', role: 'lead', status: 'idle' },
+      {
+        id: 'a2',
+        name: 'Nova',
+        role: 'dev',
+        status: 'working',
+        turns: 2,
+        turnStartedAt: turnStart,
+        activity: { kind: 'tool', tool: 'write', text: 'write src/app.js', at: turnStart + 1_000 },
+        stats: {
+          context: { tokens: 54_000, window: 128_000, breakdown: { system: 900, tools: 2_500, messages: 6_000 } },
+          usage: { inputTokens: 9_000, outputTokens: 2_000, cacheReadTokens: 1_000, totalTokens: 12_000, requests: 4 },
+        },
+      },
+      { id: 'a3', name: 'Rill', role: 'review', status: 'starting' },
+    ],
+  }
+  const state = setup({ scenario: { project: DEFAULT_PROJECT, runs: [liveRun], feed: { 'run-1': [] } } })
+  const tree = await renderLauncher(state)
+  findByClass(tree, 'dsh-artel-launcher').props.onClick()
+  await state.realm.settle()
+  let opened = await state.realm.renderer.flush()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+
+  const strip = findByClass(opened, 'dsh-artel-live')
+  assert.ok(strip !== undefined, 'a running run shows the live strip')
+  assert.equal(strip.props.role, 'list')
+  const rows = findAll(strip, (node) => node.props?.role === 'listitem')
+  assert.equal(rows.length, 3, 'every agent gets a row')
+  const nova = rows.find((row) => row.props['data-agent-id'] === 'a2')
+  const novaText = textOf(nova)
+  assert.match(novaText, /Nova/)
+  assert.match(novaText, /write/, 'the last tool call is named')
+  assert.match(novaText, /src\/app\.js/, 'and what it was called on')
+  assert.match(novaText, /1:05/, 'the current turn shows how long it already runs')
+  assert.match(novaText, /54K/)
+  assert.match(novaText, /42%/)
+  assert.equal(nova.props['data-status'], 'working')
+  assert.equal(findByClass(nova, 'dsh-artel-live__ctx').props['data-tone'], 'low')
+
+  const vega = rows.find((row) => row.props['data-agent-id'] === 'a1')
+  assert.equal(vega.props['data-status'], 'idle', 'an idle agent is shown as done, not busy')
+  assert.ok(findByClass(vega, 'dsh-artel-live__ctx--empty') !== undefined, 'no metering yet reads as a dash')
+  assert.equal(findByClass(vega, 'dsh-artel-live__clock'), undefined, 'only a running turn has a clock')
+
+  const waiting = findByClass(opened, 'dsh-artel-run__waiting')
+  assert.ok(waiting !== undefined, 'the header names what the run waits for')
+  assert.equal(waiting.props['data-kind'], 'agents')
+  assert.match(textOf(waiting), /Ждём: Nova/)
+  assert.match(textOf(waiting), /1:30/, 'and how long it waits already')
+
+  const spend = findAll(opened, (node) => String(node.props?.className ?? '') === 'dsh-artel-tag').map(textOf).join(' ')
+  assert.match(spend, /12K/, 'the header sums the tokens the run has spent')
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('a finished run shows no live strip', async () => {
+  const state = setup({ scenario: { project: DEFAULT_PROJECT, runs: [{ ...DEFAULT_RUN, status: 'applied' }], feed: { 'run-1': [] } } })
+  const tree = await renderLauncher(state)
+  findByClass(tree, 'dsh-artel-launcher').props.onClick()
+  await state.realm.settle()
+  let opened = await state.realm.renderer.flush()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+  assert.equal(findByClass(opened, 'dsh-artel-live'), undefined, 'nothing is live once the run is over')
+  assert.equal(findByClass(opened, 'dsh-artel-run__waiting'), undefined)
   state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
 })
 
@@ -1374,8 +1633,8 @@ test('all three dictionaries carry the Conductor and Fusion mode and role labels
       assert.equal(dictionaries[locale]?.[key], expected[locale][key], locale + ' has ' + key)
     }
   }
-  assert.equal(state.report.version, '0.6.0', 'the diagnostics report carries the release version')
-  assert.equal(state.realm.window.__DSH_ARTEL_DEBUG__.version, '0.6.0')
+  assert.equal(state.report.version, '0.8.0', 'the diagnostics report carries the release version')
+  assert.equal(state.realm.window.__DSH_ARTEL_DEBUG__.version, '0.8.0')
 })
 
 test('modeLabel, agentProgress and agentRole know the conductor', () => {
@@ -1449,10 +1708,15 @@ test('hero offers the Conductor mode and starts a conductor run', async () => {
   let hero = findByClass(state.realm.renderer.tree(), 'dsh-artel-hero')
   assert.ok(hero !== undefined, 'the hero is shown before a run is selected')
   let options = findAll(findByClass(hero, 'dsh-artel-segmented'), (node) => node.type === 'button' && node.props.role === 'radio')
-  assert.equal(options.length, 4, 'solo, swarm, conductor and fusion are the four modes')
-  assert.deepEqual(options.map((option) => option.props.children[0]), ['Solo', 'Swarm', 'Conductor', 'Fusion'])
+  assert.equal(options.length, 5, 'solo, swarm, conductor, fusion and orchestrator are the five modes')
+  assert.deepEqual(options.map((option) => option.props.children[0]), ['Solo', 'Swarm', 'Conductor', 'Fusion', 'Оркестратор'])
   assert.equal(options[2].props.title, 'Трое делят файлы, дирижёр принимает работу', 'the option carries its own hint')
   assert.equal(options[3].props.title, 'Три модели отвечают независимо, судья сводит ответы, одна модель делает работу')
+  assert.equal(
+    options[4].props.title,
+    'Цель режется на части, каждая в своей копии; старший проверяет каждую часть до сборки.',
+    'the orchestrator option carries its own hint',
+  )
   assert.equal(options[2].props['aria-checked'], false)
   assert.equal(textOf(findByClass(hero, 'dsh-artel-hero__mode-hint')).trim(), 'Один агент, одна копия', 'the hint follows the selected mode')
 
@@ -1584,5 +1848,850 @@ test('store.startRun normalizes the conductor mode and keeps solo as the default
   assert.equal(posts()[3].body.mode, 'fusion', 'the fusion mode is passed through')
   assert.deepEqual(posts()[3].body.models, { panel: [], judge: null, implementer: null })
 
+  await store.startRun({ task: 'Раздели на части', mode: 'orchestrator', projectPath: DEFAULT_PROJECT.projectPath })
+  await state.realm.settle()
+  assert.equal(posts().length, 5)
+  assert.equal(posts()[4].body.mode, 'orchestrator', 'the orchestrator mode is passed through')
+
   store.dispose()
+})
+
+/* ---------------------------------------------------- orchestrator (0.7.0) */
+
+test('all three dictionaries carry the Orchestrator mode, roles, part statuses and parts strings', () => {
+  const state = setup()
+  const dictionaries = state.dictionaries['dsh-artel']
+  assert.ok(dictionaries !== undefined)
+  const expected = {
+    en: {
+      'mode.orchestrator': 'Orchestrator',
+      'mode.orchestrator.hint': 'The goal is split into parts, each built in its own copy and checked before the parts are assembled.',
+      'role.planner': 'Planner',
+      'role.part': 'Part agent',
+      'role.reviewer': 'Reviewer',
+      'role.merger': 'Merger',
+      'partStatus.pending': 'Pending',
+      'partStatus.working': 'Working',
+      'partStatus.reviewing': 'In review',
+      'partStatus.rework': 'Back to work',
+      'partStatus.accepted': 'Accepted',
+      'partStatus.failed': 'Failed',
+      'parts.title': 'Parts',
+      'parts.item': 'Part {n} — {title}',
+      'parts.summaryLabel': 'Plan',
+      'parts.conditionsLabel': 'Done when',
+      'parts.filesLabel': 'Files',
+      'parts.rounds': 'Rework round {n} of 2',
+      'parts.mergeResolved': 'Merger resolved {n} conflict(s)',
+      'parts.mergeUnresolved': 'The merge is not finished — apply is unavailable.',
+      'parts.accepted': '{done}/{total} accepted',
+    },
+    ru: {
+      'mode.orchestrator': 'Оркестратор',
+      'mode.orchestrator.hint': 'Цель режется на части, каждая в своей копии; старший проверяет каждую часть до сборки.',
+      'role.planner': 'Планировщик',
+      'role.part': 'Агент части',
+      'role.reviewer': 'Проверяющий',
+      'role.merger': 'Сборщик',
+      'partStatus.pending': 'Ожидает',
+      'partStatus.working': 'В работе',
+      'partStatus.reviewing': 'На проверке',
+      'partStatus.rework': 'Возвращена в работу',
+      'partStatus.accepted': 'Принята',
+      'partStatus.failed': 'Ошибка',
+      'parts.title': 'Части',
+      'parts.item': 'Часть {n} — {title}',
+      'parts.summaryLabel': 'План',
+      'parts.conditionsLabel': 'Сделано, если',
+      'parts.filesLabel': 'Файлы',
+      'parts.rounds': 'Возврат {n} из 2',
+      'parts.mergeResolved': 'Сборщик разрешил конфликтов: {n}',
+      'parts.mergeUnresolved': 'Сборка не завершена — применить нельзя.',
+      'parts.accepted': '{done}/{total} принято',
+    },
+    zh: {
+      'mode.orchestrator': '编排',
+      'mode.orchestrator.hint': '目标拆成多个部分，每部分在各自的副本中完成，组装前逐一验收。',
+      'role.planner': '规划者',
+      'role.part': '部分代理',
+      'role.reviewer': '审查者',
+      'role.merger': '合并者',
+      'partStatus.pending': '等待',
+      'partStatus.working': '进行中',
+      'partStatus.reviewing': '审核中',
+      'partStatus.rework': '返工',
+      'partStatus.accepted': '已通过',
+      'partStatus.failed': '失败',
+      'parts.title': '部分',
+      'parts.item': '第 {n} 部分 — {title}',
+      'parts.summaryLabel': '计划',
+      'parts.conditionsLabel': '完成条件',
+      'parts.filesLabel': '文件',
+      'parts.rounds': '返工 {n}/2',
+      'parts.mergeResolved': '合并者解决了 {n} 处冲突',
+      'parts.mergeUnresolved': '合并未完成——暂时无法应用。',
+      'parts.accepted': '已通过 {done}/{total}',
+    },
+  }
+  for (const locale of Object.keys(expected)) {
+    for (const key of Object.keys(expected[locale])) {
+      assert.equal(dictionaries[locale]?.[key], expected[locale][key], locale + ' has ' + key)
+    }
+  }
+  // Key parity: no locale may silently lose one of the Orchestrator strings.
+  const keys = Object.keys(expected.en)
+  for (const locale of Object.keys(expected)) {
+    for (const key of keys) assert.equal(typeof dictionaries[locale][key], 'string', locale + ' carries ' + key)
+  }
+  assert.deepEqual(state.realm.window.__DSH_ARTEL_DEBUG__.modes, ['solo', 'swarm', 'conductor', 'fusion', 'orchestrator'])
+})
+
+test('orchestrator helpers map plan parts to progress, labels and merge guards', () => {
+  const state = setup()
+  const debug = state.realm.window.__DSH_ARTEL_DEBUG__
+  const t = (locale) => (key) => (debug.dictionaries[locale][key] !== undefined ? debug.dictionaries[locale][key] : key)
+  const ruT = t('ru')
+  const enT = t('en')
+  const zhT = t('zh')
+
+  assert.equal(debug.modeLabel(enT, 'orchestrator'), 'Orchestrator')
+  assert.equal(debug.modeLabel(ruT, 'orchestrator'), 'Оркестратор')
+  assert.equal(debug.modeLabel(zhT, 'orchestrator'), '编排')
+
+  assert.equal(debug.roleLabel(ruT, 'planner'), 'Планировщик')
+  assert.equal(debug.roleLabel(ruT, 'part'), 'Агент части')
+  assert.equal(debug.roleLabel(ruT, 'reviewer'), 'Проверяющий')
+  assert.equal(debug.roleLabel(ruT, 'merger'), 'Сборщик')
+  assert.equal(debug.roleLabel(ruT, 'mystery-role'), 'mystery-role', 'an unknown role stays raw')
+  assert.equal(debug.roleLabel(ruT, undefined), 'agent', 'a missing role keeps the untranslated agent fallback')
+
+  assert.equal(debug.partStatusTone('pending'), 'muted')
+  assert.equal(debug.partStatusTone('working'), 'active')
+  assert.equal(debug.partStatusTone('reviewing'), 'active')
+  assert.equal(debug.partStatusTone('rework'), 'warn')
+  assert.equal(debug.partStatusTone('accepted'), 'ok')
+  assert.equal(debug.partStatusTone('failed'), 'error')
+  assert.equal(debug.partStatusTone('bogus'), 'muted')
+  assert.equal(debug.partStatusLabel(ruT, 'rework'), 'Возвращена в работу')
+  assert.equal(debug.partStatusLabel(enT, 'accepted'), 'Accepted')
+  assert.equal(debug.partStatusLabel(zhT, 'failed'), '失败')
+  assert.equal(debug.partStatusLabel(ruT, 'bogus'), 'bogus', 'an unknown part status stays raw')
+
+  assert.deepEqual(debug.planParts(undefined), [], 'a run without a plan has no parts')
+  assert.deepEqual(debug.planParts({ plan: null }), [])
+  assert.equal(debug.planParts(ORCHESTRATOR_RUN).length, 3)
+  assert.equal(debug.planParts(ORCHESTRATOR_RUN)[2].status, 'rework')
+
+  assert.deepEqual(debug.agentProgress(ORCHESTRATOR_RUN), { done: 1, total: 3 }, 'accepted parts are the progress share')
+  assert.deepEqual(debug.agentProgress({ ...ORCHESTRATOR_RUN, plan: null }), { done: 0, total: 0 }, 'no plan yet means empty progress')
+  assert.deepEqual(
+    debug.agentProgress({ mode: 'orchestrator', plan: { parts: [{ id: 'p1', status: 'accepted' }, { id: 'p2', status: 'working' }] } }),
+    { done: 1, total: 2 },
+    'only accepted parts count as done',
+  )
+  assert.equal(debug.runMeta(ruT, ORCHESTRATOR_RUN), 'Оркестратор · 1/3 · Сборка')
+
+  assert.equal(debug.mergeBlocked(ORCHESTRATOR_RUN), false)
+  assert.equal(debug.mergeBlocked(ORCHESTRATOR_BLOCKED_RUN), true, 'unresolved merge paths block apply')
+  assert.equal(debug.mergeBlocked({}), false)
+  assert.equal(debug.mergeBlocked({ merge: { unresolved: [] } }), false)
+
+  assert.equal(debug.agentRole(ruT, ORCHESTRATOR_RUN, 'Metis'), 'Планировщик')
+  assert.equal(debug.agentRole(ruT, ORCHESTRATOR_RUN, 'Vega'), 'Агент части')
+  assert.equal(debug.agentRole(ruT, ORCHESTRATOR_RUN, 'Rill'), 'Проверяющий')
+  assert.equal(debug.agentRole(ruT, ORCHESTRATOR_RUN, 'Atlas'), 'Сборщик')
+})
+
+test('hero offers the Orchestrator mode and starts an orchestrator run', async () => {
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [],
+      nextRunId: 'run-orchestrator',
+      newRunFeed: [
+        { seq: 1, at: '2026-01-01T11:00:00Z', kind: 'plan', text: 'Цель разбита на три части.' },
+        { seq: 2, at: '2026-01-01T11:01:00Z', kind: 'status', text: 'Part 1 — Настроить кнопку: accepted.' },
+      ],
+    },
+  })
+  const tree = await renderLauncher(state)
+  findByClass(tree, 'dsh-artel-launcher').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  await state.realm.renderer.flush()
+
+  const hero = findByClass(state.realm.renderer.tree(), 'dsh-artel-hero')
+  assert.ok(hero !== undefined, 'the hero is shown before a run is selected')
+  const options = findAll(findByClass(hero, 'dsh-artel-segmented'), (node) => node.type === 'button' && node.props.role === 'radio')
+  assert.equal(options.length, 5, 'the mode picker now offers five modes')
+  assert.equal(options[4].props.children[0], 'Оркестратор')
+
+  options[4].props.onClick()
+  await state.realm.renderer.flush()
+  const selected = findByClass(state.realm.renderer.tree(), 'dsh-artel-hero')
+  assert.ok(selected !== undefined, 'the hero stays mounted after the mode change')
+  assert.equal(
+    textOf(findByClass(selected, 'dsh-artel-hero__mode-hint')).trim(),
+    'Цель режется на части, каждая в своей копии; старший проверяет каждую часть до сборки.',
+    'the orchestrator hint follows the selected mode',
+  )
+
+  const textarea = findAll(selected, (node) => node.type === 'textarea' && node.props.className === 'dsh-artel-hero__textarea')[0]
+  assert.ok(textarea !== undefined)
+  textarea.props.onChange({ target: { value: 'Разделите работу на части' } })
+  await state.realm.renderer.flush()
+  findButton(state.realm.renderer.tree(), 'Поехали →').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  const started = await state.realm.renderer.flush()
+
+  const post = state.realm.calls.find((call) => call.pathname === '/api/dsh-artel/runs' && call.method === 'POST')
+  assert.ok(post !== undefined, 'the orchestrator run start reached the Host')
+  assert.equal(post.body.mode, 'orchestrator', 'the orchestrator mode travels with the run')
+  assert.equal(post.body.task, 'Разделите работу на части')
+  assert.ok(findByClass(started, 'dsh-artel-run') !== undefined, 'the run pane replaces the hero')
+  const runText = textOf(findByClass(started, 'dsh-artel-run'))
+  assert.match(runText, /Оркестратор/)
+  assert.match(runText, /Цель разбита на три части\./)
+
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('orchestrator run renders the parts card with plan, statuses and merge note', async () => {
+  const state = setup({ scenario: { project: DEFAULT_PROJECT, runs: [ORCHESTRATOR_RUN], changes: [] } })
+  const tree = await renderLauncher(state)
+  findByClass(tree, 'dsh-artel-launcher').props.onClick()
+  await state.realm.settle()
+  let opened = await state.realm.renderer.flush()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+
+  const card = findByClass(opened, 'dsh-artel-parts')
+  assert.ok(card !== undefined, 'the parts card is rendered for an orchestrator run')
+  const cardText = textOf(card)
+  assert.match(cardText, /Части/)
+  assert.match(cardText, /1\/3 принято/)
+  assert.match(cardText, /План/)
+  assert.match(cardText, /Сначала кнопка, потом стили и тесты\./)
+  assert.match(cardText, /Часть 1 — Настроить кнопку/)
+  assert.match(cardText, /Часть 2 — Проверить стили/)
+  assert.match(cardText, /Часть 3 — Обновить тесты/)
+  assert.match(cardText, /Принята/)
+  assert.match(cardText, /На проверке/)
+  assert.match(cardText, /Возвращена в работу/)
+  assert.match(cardText, /Сделано, если/)
+  assert.match(cardText, /Кнопка видна на главном экране/)
+  assert.match(cardText, /Агент части: Vega/)
+  assert.match(cardText, /Проверяющий: Rill/)
+  assert.match(cardText, /Возврат 1 из 2/)
+  assert.match(cardText, /не хватило проверки на клавиатуру/)
+  assert.match(cardText, /Сборщик разрешил конфликтов: 1/)
+
+  const rows = findAll(card, (node) => typeof node.props.className === 'string' && node.props.className.split(/\s+/).includes('dsh-artel-part'))
+  assert.equal(rows.length, 3, 'one row per plan part')
+  assert.deepEqual(rows.map((row) => row.props['data-status']), ['accepted', 'reviewing', 'rework'])
+  const pills = findAll(card, (node) => typeof node.props.className === 'string' && node.props.className.split(/\s+/).includes('dsh-artel-pill'))
+  assert.deepEqual(pills.map((pill) => pill.props['data-tone']), ['ok', 'active', 'warn'], 'each part status paints its own tone')
+
+  const roles = findAll(opened, (node) => typeof node.props.className === 'string' && node.props.className.split(/\s+/).includes('dsh-artel-models__role'))
+  assert.deepEqual(roles.map((node) => textOf(node).trim()), ['Планировщик', 'Агент части', 'Проверяющий', 'Сборщик'])
+
+  const railRows = findAll(opened, (node) => typeof node.props.className === 'string' && node.props.className.split(/\s+/).includes('dsh-artel-row'))
+  assert.equal(railRows.length, 1)
+  assert.match(textOf(railRows[0]), /Оркестратор · 1\/3 · Сборка/, 'the rail shows accepted parts instead of agent statuses')
+
+  assert.ok(findByClass(opened, 'dsh-artel-changes') !== undefined, 'the review card stays available for an Orchestrator run')
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('a half-finished merge disables apply but keeps discard available', async () => {
+  const state = setup({
+    scenario: { project: DEFAULT_PROJECT, runs: [ORCHESTRATOR_BLOCKED_RUN], changes: REVIEW_CHANGES },
+  })
+  const tree = await renderLauncher(state)
+  findByClass(tree, 'dsh-artel-launcher').props.onClick()
+  await state.realm.settle()
+  let opened = await state.realm.renderer.flush()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+
+  const parts = findByClass(opened, 'dsh-artel-parts')
+  assert.ok(parts !== undefined)
+  assert.match(textOf(parts), /Сборка не завершена — применить нельзя\./)
+
+  const card = findByClass(opened, 'dsh-artel-changes')
+  assert.ok(card !== undefined, 'the review card is rendered for a failed run')
+  assert.match(textOf(card), /Сборка не завершена — применить нельзя\./, 'the review card explains why apply is closed')
+
+  const actions = findByClass(opened, 'dsh-artel-changes__actions')
+  assert.ok(actions !== undefined)
+  const applyButton = findButton(actions, 'Применить')
+  const discardButton = findButton(actions, 'Отклонить')
+  assert.ok(applyButton !== undefined)
+  assert.ok(discardButton !== undefined)
+  assert.equal(applyButton.props.disabled, true, 'apply is disabled while the merge is unresolved')
+  assert.equal(discardButton.props.disabled, false, 'discard stays available')
+
+  applyButton.props.onClick()
+  opened = await state.realm.renderer.flush()
+  assert.doesNotMatch(textOf(findByClass(opened, 'dsh-artel-changes')), /Применить изменения\?/, 'apply never reaches its confirmation')
+  assert.equal(state.realm.calls.filter((call) => call.pathname.endsWith('/apply')).length, 0)
+
+  discardButton.props.onClick()
+  opened = await state.realm.renderer.flush()
+  assert.match(textOf(findByClass(opened, 'dsh-artel-changes')), /Отклонить изменения\?/, 'discard keeps its confirmation')
+  findButton(findByClass(opened, 'dsh-artel-changes__actions'), 'Отклонить').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+  assert.match(textOf(findByClass(opened, 'dsh-artel-changes')), /Отклонено/)
+  assert.equal(state.realm.calls.filter((call) => call.pathname.endsWith('/discard') && call.method === 'POST').length, 1)
+
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+/* ------------------------------------------- auto-queue & factory (0.8.0) */
+
+/** Minimal fetch Response stand-in for scenario.route handlers. */
+function reply(payload, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    async text() { return JSON.stringify(payload) },
+  }
+}
+
+function queueFixture(overrides = {}) {
+  return {
+    sessionId: 'sess-1',
+    projectPath: DEFAULT_PROJECT.projectPath,
+    autopilot: false,
+    limit: 20,
+    checkCommand: 'npm test',
+    checkDisabled: false,
+    checkGuessed: true,
+    tasks: [
+      {
+        id: 'q-1',
+        text: 'Добавь кнопку',
+        title: 'Добавь кнопку',
+        mode: 'solo',
+        status: 'queued',
+        runId: null,
+        reason: null,
+        questions: 0,
+        fixes: 0,
+        check: null,
+        changeCount: 0,
+        files: [],
+        parkedBranch: null,
+        createdAt: '2026-01-01T10:00:00.000Z',
+        startedAt: null,
+        finishedAt: null,
+      },
+    ],
+    counts: { total: 1, queued: 1, running: 0, passed: 0, parked: 0, skipped: 0, stopped: 0, done: 0, remaining: 1 },
+    progress: { text: 'В очереди · 1' },
+    events: [],
+    results: null,
+    lastVersion: null,
+    retryAt: null,
+    stopReason: null,
+    ignoredVersions: [],
+    ...overrides,
+  }
+}
+
+const FACTORY_BOARD = {
+  id: 'board-1',
+  projectPath: DEFAULT_PROJECT.projectPath,
+  name: 'artel-toy',
+  enabled: true,
+  paused: false,
+  template: 'normal',
+  models: { triage: null, work: null, tests: null, review: null },
+  routes: ['solo', 'swarm', 'fusion', 'orchestrator'],
+  limits: { workersPerTicket: 1, ticketsAtOnce: 1, ticketsPerDay: 20, allowApiEngine: true, allowLowSubscriptions: false },
+  commands: { test: 'npm test', check: '', preview: '' },
+  quirks: { appendTests: false },
+  trackers: [],
+  readiness: {
+    ready: true,
+    checks: [
+      { id: 'git', label: 'git', ok: true, blocking: true },
+      { id: 'commit', label: 'Первый коммит', ok: true, blocking: true },
+      { id: 'engines', label: 'Движки', ok: true, blocking: true },
+      { id: 'testCommand', label: 'Тесты', ok: true, blocking: false },
+      { id: 'playwright', label: 'Playwright', ok: false, blocking: false, hint: 'Нет Playwright' },
+    ],
+  },
+  counters: { day: '2026-01-01', started: 1, created: 2, merged: 0 },
+  eventSeq: 3,
+  events: [
+    { seq: 3, at: '2026-01-01T10:05:00.000Z', kind: 'status', text: 'Фабрика включена.', stage: null, ticketId: null },
+  ],
+}
+
+const FACTORY_TICKET = {
+  id: 't-12',
+  boardId: 'board-1',
+  number: 12,
+  title: 'Тёмная тема',
+  text: 'Сделай тёмную тему и переключатель.',
+  stage: 'working',
+  waiting: null,
+  spec: {
+    summary: 'Добавить тёмную тему и переключатель в шапке.',
+    criteria: ['Тема переключается', 'Выбор сохраняется между запусками'],
+    assumptions: ['Тема по умолчанию — системная'],
+    route: 'solo',
+  },
+  route: { mode: 'solo', requested: 'solo', notes: [] },
+  check: { command: 'npm test', ok: true, output: '', reason: null },
+  review: null,
+  repairRound: 0,
+  triageRunId: null,
+  runId: 'run-f12',
+  versions: [],
+  branch: null,
+  pr: null,
+  sessionId: 'factory-board-1-t-12',
+  source: null,
+  attachments: [],
+  events: [],
+  createdAt: '2026-01-01T10:00:00.000Z',
+  updatedAt: '2026-01-01T10:05:00.000Z',
+}
+
+const FACTORY_WAITING_TICKET = {
+  ...FACTORY_TICKET,
+  id: 't-13',
+  number: 13,
+  title: 'Сброс пароля',
+  stage: 'waiting',
+  waiting: { kind: 'triage-questions', questions: ['Какой канал для сброса: письмо или SMS?'] },
+  spec: { summary: 'Добавить сброс пароля на почту.', criteria: ['Письмо приходит'], assumptions: [], route: 'solo' },
+}
+
+async function openArtel(state) {
+  const tree = await renderLauncher(state)
+  findByClass(tree, 'dsh-artel-launcher').props.onClick()
+  for (let iteration = 0; iteration < 3; iteration += 1) {
+    await state.realm.settle()
+    await state.realm.renderer.flush()
+  }
+  return state.realm.renderer.tree()
+}
+
+test('all three dictionaries carry the auto-queue and factory strings', () => {
+  const state = setup()
+  const dictionaries = state.dictionaries['dsh-artel']
+  assert.ok(dictionaries !== undefined)
+  const english = Object.keys(dictionaries.en).sort()
+  for (const locale of ['ru', 'zh']) {
+    assert.deepEqual(Object.keys(dictionaries[locale]).sort(), english, locale + ' has every English key')
+  }
+  const queueAndFactory = english.filter((key) => key.startsWith('queue.') || key.startsWith('factory.'))
+  assert.equal(queueAndFactory.length, 179, 'every queue and factory string is present')
+  const expected = {
+    en: {
+      'queue.title': 'Waiting',
+      'queue.autopilot': 'Auto-queue',
+      'factory.title': 'Factory',
+      'factory.column.checks': 'Checks',
+      'factory.waiting.triageQuestions': 'Triage has questions',
+      'factory.template.fast': 'Fast',
+    },
+    ru: {
+      'queue.title': 'Ожидают',
+      'queue.autopilot': 'Автоочередь',
+      'queue.preflight': 'Перед запуском',
+      'queue.results': 'Итоги автоочереди',
+      'factory.title': 'Фабрика',
+      'factory.column.incoming': 'Входящие',
+      'factory.column.working': 'Работа',
+      'factory.column.checks': 'Проверки',
+      'factory.column.ready': 'Готово к PR',
+      'factory.column.waiting': 'Ждёт вас',
+      'factory.waiting.repairExhausted': 'Круги починки кончились',
+      'factory.spec': 'Спецификация',
+      'factory.criteria': 'Критерии',
+    },
+    zh: {
+      'queue.title': '等待中',
+      'queue.autopilot': '自动队列',
+      'factory.title': '工厂',
+      'factory.column.checks': '检查',
+    },
+  }
+  for (const locale of Object.keys(expected)) {
+    for (const key of Object.keys(expected[locale])) {
+      assert.equal(dictionaries[locale][key], expected[locale][key], locale + ' has ' + key)
+    }
+  }
+})
+
+test('queue and factory view-model helpers are exposed on the debug bridge', () => {
+  const realm = createRealm()
+  const plugin = realm.load()
+  plugin.apply(createCtx(realm).ctx)
+  const debug = realm.window.__DSH_ARTEL_DEBUG__
+  assert.ok(debug.queueHelpers !== undefined, 'queue helpers are published')
+  assert.ok(debug.factoryHelpers !== undefined, 'factory helpers are published')
+  const ruT = (key) => (debug.dictionaries.ru[key] !== undefined ? debug.dictionaries.ru[key] : key)
+  const enT = (key) => (debug.dictionaries.en[key] !== undefined ? debug.dictionaries.en[key] : key)
+
+  assert.deepEqual(debug.queueHelpers.modes, ['solo', 'swarm', 'conductor', 'fusion'])
+  assert.equal(debug.queueHelpers.statusLabel(ruT, 'queued'), 'В очереди')
+  assert.equal(debug.queueHelpers.statusLabel(ruT, 'passed'), 'Версия сохранена')
+  assert.equal(debug.queueHelpers.statusLabel(ruT, 'bogus'), 'bogus')
+  assert.equal(debug.queueHelpers.statusTone('running'), 'active')
+  assert.equal(debug.queueHelpers.statusTone('passed'), 'ok')
+  assert.equal(debug.queueHelpers.statusTone('parked'), 'error')
+  assert.equal(debug.queueHelpers.statusTone('stopped'), 'warn')
+  assert.equal(debug.queueHelpers.dotState('running'), 'ongoing')
+  assert.equal(debug.queueHelpers.dotState('passed'), 'done')
+  assert.equal(debug.queueHelpers.dotState('parked'), 'error')
+  assert.equal(debug.queueHelpers.bytesLabel(2 * 1024 * 1024 * 1024), '2.0 GB')
+  const meta = debug.queueHelpers.taskMeta(ruT, { status: 'parked', mode: 'solo', questions: 1, fixes: 2, reason: 'Проверка не прошла' })
+  assert.match(meta, /Solo/)
+  assert.match(meta, /Проверка не прошла/)
+
+  assert.deepEqual(debug.factoryHelpers.columns, ['incoming', 'triage', 'working', 'checks', 'ready', 'waiting', 'done'])
+  assert.deepEqual(debug.factoryHelpers.stageColumn, {
+    incoming: 'incoming',
+    triage: 'triage',
+    working: 'working',
+    tests: 'checks',
+    check: 'checks',
+    review: 'checks',
+    ready: 'ready',
+    waiting: 'waiting',
+    done: 'done',
+  })
+  assert.deepEqual(debug.factoryHelpers.templates, ['normal', 'fast', 'strict'])
+  assert.equal(debug.factoryHelpers.templateLabel(ruT, 'fast'), 'Быстрый')
+  assert.match(debug.factoryHelpers.templateHint(ruT, 'fast'), /один круг починки/)
+  assert.equal(debug.factoryHelpers.columnLabel(ruT, 'checks'), 'Проверки')
+  assert.equal(debug.factoryHelpers.stageLabel(ruT, 'tests'), 'Тесты')
+  assert.equal(debug.factoryHelpers.waitingLabel(ruT, 'plan'), 'План ждёт утверждения')
+  assert.equal(debug.factoryHelpers.ticketColumn({ stage: 'tests' }), 'checks')
+  assert.equal(debug.factoryHelpers.ticketColumn(FACTORY_WAITING_TICKET), 'waiting')
+  assert.equal(debug.factoryHelpers.ticketColumn({ stage: 'ready' }), 'ready')
+  assert.equal(debug.factoryHelpers.ticketNumber({ number: 48 }), '#48')
+  assert.equal(debug.factoryHelpers.ticketNumber({}), '#–')
+  assert.deepEqual(
+    debug.factoryHelpers.criteria({
+      spec: { criteria: ['Тема переключается', { text: 'Выбор сохраняется', met: null }] },
+      review: { criteria: [{ text: 'Тема переключается', met: true }, { text: 'Выбор сохраняется', met: false }] },
+    }),
+    [{ text: 'Тема переключается', met: true }, { text: 'Выбор сохраняется', met: false }],
+  )
+  assert.equal(debug.factoryHelpers.selectionKey({ provider: 'test', model: 'fast' }), 'test/fast')
+  assert.deepEqual(debug.factoryHelpers.selectionOfKey('test/fast'), { provider: 'test', model: 'fast' })
+  assert.equal(typeof debug.factoryHelpers.clockLabel('2026-01-01T10:05:00.000Z'), 'string')
+})
+
+test('the new-session screen queues a task and flips «Автоочередь»', async () => {
+  const current = { queue: queueFixture() }
+  const autopilotCalls = []
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [],
+      route: ({ method, pathname, body }) => {
+        if (pathname === '/api/dsh-artel/queue' && method === 'GET') return reply(current.queue)
+        if (pathname === '/api/dsh-artel/queue' && method === 'POST') {
+          const added = (body.texts ?? []).map((text, index) => ({
+            ...queueFixture().tasks[0],
+            id: 'q-new-' + index,
+            text,
+            title: text,
+          }))
+          current.queue = { ...current.queue, tasks: [...current.queue.tasks, ...added] }
+          return reply({ queue: current.queue, added: added.length })
+        }
+        if (pathname === '/api/dsh-artel/queue/autopilot' && method === 'POST') {
+          autopilotCalls.push(body)
+          current.queue = { ...current.queue, autopilot: body.autopilot === true }
+          return reply({ queue: current.queue })
+        }
+        if (pathname === '/api/dsh-artel/factory' && method === 'GET') return reply({ boards: [] })
+        return undefined
+      },
+    },
+  })
+  let opened = await openArtel(state)
+  const strip = findByClass(opened, 'dsh-artel-queue')
+  assert.ok(strip !== undefined, 'the hero shows the «Ожидают» strip')
+  assert.equal(strip.props['data-variant'], 'hero')
+  const stripText = textOf(strip)
+  assert.match(stripText, /Ожидают/)
+  assert.match(stripText, /Автоочередь/)
+  assert.match(stripText, /В очереди · 1/)
+  assert.match(stripText, /Добавь кнопку/)
+
+  const toggle = findAll(strip, (node) => node.type === 'button' && node.props.role === 'switch')[0]
+  assert.ok(toggle !== undefined, 'the auto-queue switch is rendered')
+  assert.equal(toggle.props['aria-checked'], false)
+  toggle.props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+  assert.equal(autopilotCalls.length, 1, 'the switch reaches the Host')
+  assert.equal(autopilotCalls[0].autopilot, true)
+  assert.ok(findAll(opened, (node) => node.type === 'button' && node.props.role === 'switch')[0].props['aria-checked'], 'the switch reflects the new state')
+
+  const input = findAll(opened, (node) => node.type === 'input' && String(node.props.className).includes('dsh-artel-queue__input'))[0]
+  assert.ok(input !== undefined, 'the add-task input is rendered')
+  input.props.onChange({ target: { value: 'Почини тесты' } })
+  opened = await state.realm.renderer.flush()
+  findButton(findByClass(opened, 'dsh-artel-queue'), 'В очередь').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  await state.realm.renderer.flush()
+  const posted = state.realm.calls.find((call) => call.pathname === '/api/dsh-artel/queue' && call.method === 'POST')
+  assert.ok(posted !== undefined, 'adding a task reached the Host')
+  assert.deepEqual(posted.body.texts, ['Почини тесты'])
+  assert.equal(posted.body.mode, 'solo')
+  assert.equal(posted.body.sessionId, 'sess-1')
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('history marks auto-queue versions and the run header too', async () => {
+  const state = setup({ scenario: { project: DEFAULT_PROJECT, runs: [AUTOQUEUE_RUN], changes: [] } })
+  const opened = await openArtel(state)
+  const row = findByClass(opened, 'dsh-artel-row')
+  assert.ok(row !== undefined, 'the history row is rendered')
+  assert.match(textOf(row), /Автоочередь/)
+  row.props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  const tree = await state.realm.renderer.flush()
+  const head = findByClass(tree, 'dsh-artel-run__head')
+  assert.ok(head !== undefined, 'the run header is rendered')
+  assert.match(textOf(head), /Автоочередь/)
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('auto-queue results let the user open, rework or roll back a version', async () => {
+  const resultsQueue = queueFixture({
+    autopilot: false,
+    tasks: [],
+    counts: { total: 1, queued: 0, running: 0, passed: 1, parked: 0, skipped: 0, stopped: 0, done: 1, remaining: 0 },
+    progress: { text: 'Автоочередь идёт · 1 из 1' },
+    results: {
+      at: '2026-01-01T10:00:00.000Z',
+      stopReason: 'empty',
+      stopText: 'Очередь пуста.',
+      startedAt: '2026-01-01T09:00:00.000Z',
+      limit: 20,
+      passed: [{ taskId: 'q-1', title: 'Ночная задача', runId: 'run-auto', files: ['src/app.js'], changeCount: 1, check: { ok: true, command: 'npm test' } }],
+      parked: [],
+      notTaken: [],
+      stats: { taken: 1, passed: 1, parked: 0 },
+    },
+  })
+  const posts = []
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [AUTOQUEUE_RUN],
+      changes: [],
+      route: ({ method, pathname, body }) => {
+        if (pathname === '/api/dsh-artel/queue' && method === 'GET') return reply(resultsQueue)
+        if (pathname === '/api/dsh-artel/queue' && method === 'POST') {
+          posts.push(body)
+          return reply({ queue: resultsQueue, added: 1 })
+        }
+        return undefined
+      },
+    },
+  })
+  const opened = await openArtel(state)
+  const results = findByClass(opened, 'dsh-artel-queue__results')
+  assert.ok(results !== undefined, 'the results card is rendered')
+  assert.match(textOf(results), /Итоги автоочереди/)
+  findButton(results, 'Доработать').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  assert.equal(posts.length, 1, 'rework adds a new task')
+  assert.deepEqual(posts[0].texts, ['Доработать: Ночная задача'])
+  assert.equal(posts[0].basePath, 'C:\\tmp\\copies\\run-auto')
+  const tree = await state.realm.renderer.flush()
+  const again = findByClass(tree, 'dsh-artel-queue__results')
+  findButton(again, 'Откатить').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  const discarded = state.realm.calls.find((call) => call.method === 'POST' && call.pathname === '/api/dsh-artel/runs/run-auto/discard')
+  assert.ok(discarded !== undefined, 'roll back discards the version run')
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('unsaved versions open the queue pre-flight and get saved as versions', async () => {
+  const blocked = {
+    pendingVersions: [{ runId: 'run-review', title: 'Add a button', status: 'interrupted', changeCount: 2 }],
+    check: { command: 'npm test', guessed: true, disabled: false },
+    limit: 20,
+    taskCount: 0,
+    diskBytes: 2 * 1024 * 1024 * 1024,
+    busy: false,
+  }
+  const calls = []
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [REVIEW_RUN],
+      changes: [],
+      route: ({ method, pathname, body }) => {
+        if (pathname === '/api/dsh-artel/queue' && method === 'GET') return reply(queueFixture({ tasks: [], counts: { total: 0, queued: 0, running: 0, passed: 0, parked: 0, skipped: 0, stopped: 0, done: 0, remaining: 0 }, progress: { text: 'В очереди · 0' } }))
+        if (pathname === '/api/dsh-artel/queue/autopilot' && method === 'POST') {
+          calls.push(body)
+          if (body.decisions !== true) return reply({ queue: queueFixture({ autopilot: false }), blocked })
+          return reply({ queue: queueFixture({ autopilot: true }) })
+        }
+        if (pathname === '/api/dsh-artel/factory' && method === 'GET') return reply({ boards: [] })
+        return undefined
+      },
+    },
+  })
+  let opened = await openArtel(state)
+  const strip = findByClass(opened, 'dsh-artel-queue')
+  assert.ok(strip !== undefined, 'the run page shows the queue strip')
+  findAll(strip, (node) => node.type === 'button' && node.props.role === 'switch')[0].props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+
+  const preflight = findByClass(opened, 'dsh-artel-queue__preflight')
+  assert.ok(preflight !== undefined, 'the pre-flight check opens before a night shift')
+  const preflightText = textOf(preflight)
+  assert.match(preflightText, /Перед запуском/)
+  assert.match(preflightText, /Не сохранённые версии/)
+  assert.match(preflightText, /Add a button/)
+  assert.equal(findAll(preflight, (node) => node.type === 'button' && node.props['data-active'] === 'true').length, 0, 'no decision picked yet')
+
+  findButton(preflight, 'Сохранить версией').props.onClick()
+  opened = await state.realm.renderer.flush()
+  const marked = findByClass(opened, 'dsh-artel-queue__preflight')
+  assert.equal(findAll(marked, (node) => node.type === 'button' && node.props['data-active'] === 'true').length, 1, 'the selected version is marked to be saved')
+
+  findButton(marked, 'Продолжить').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  await state.realm.renderer.flush()
+  const decided = calls.find((body) => body.decisions === true)
+  assert.ok(decided !== undefined, 'the pre-flight decision reached the Host')
+  assert.deepEqual(decided.saveVersionRunIds, ['run-review'])
+  assert.deepEqual(decided.postponeVersionRunIds, [])
+  assert.equal(decided.checkCommand, 'npm test')
+  assert.equal(decided.autopilot, true)
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('the factory board renders the columns and opens a ticket', async () => {
+  const boards = [FACTORY_BOARD]
+  const tickets = [FACTORY_TICKET, FACTORY_WAITING_TICKET]
+  const settingsCalls = []
+  const takeoverCalls = []
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [],
+      route: ({ method, pathname, body }) => {
+        if (pathname === '/api/dsh-artel/factory' && method === 'GET') return reply({ boards })
+        if (pathname === '/api/dsh-artel/factory/board-1' && method === 'GET') return reply({ boards, board: FACTORY_BOARD, tickets })
+        if (pathname === '/api/dsh-artel/factory/board-1/tickets/t-12' && method === 'GET') {
+          return reply({
+            ticket: FACTORY_TICKET,
+            feed: { events: [{ seq: 1, at: '2026-01-01T10:04:00.000Z', kind: 'status', text: 'Агент правит тему.' }], cursor: 1 },
+          })
+        }
+        if (pathname === '/api/dsh-artel/factory/board-1/tickets/t-12/takeover' && method === 'POST') {
+          takeoverCalls.push(body)
+          return reply({ ticket: { ...FACTORY_TICKET, stage: 'waiting', waiting: { kind: 'postponed', reason: 'Взято вручную: тикет снят с конвейера.' } } })
+        }
+        if (pathname === '/api/dsh-artel/factory/board-1/settings' && method === 'POST') {
+          settingsCalls.push(body)
+          return reply({ board: { ...FACTORY_BOARD, ...body } })
+        }
+        if (pathname === '/api/dsh-artel/queue' && method === 'GET') return reply(queueFixture())
+        return undefined
+      },
+    },
+  })
+  let opened = await openArtel(state)
+  const factoryButton = findAll(opened, (node) => node.type === 'button' && String(node.props.className ?? '').includes('dsh-artel-rail__factory'))[0]
+  assert.ok(factoryButton !== undefined, 'the rail has a factory entry')
+  factoryButton.props.onClick()
+  for (let iteration = 0; iteration < 3; iteration += 1) {
+    await state.realm.settle()
+    opened = await state.realm.renderer.flush()
+  }
+
+  const pane = findByClass(opened, 'dsh-artel-factory')
+  assert.ok(pane !== undefined, 'the factory pane opens in the workspace')
+  const paneText = textOf(pane)
+  assert.match(paneText, /Фабрика/)
+  assert.match(paneText, /Входящие/)
+  assert.match(paneText, /Разбор/)
+  assert.match(paneText, /Работа/)
+  assert.match(paneText, /Проверки/)
+  assert.match(paneText, /Готово к PR/)
+  assert.match(paneText, /Ждёт вас/)
+  const columns = findAll(pane, (node) => String(node.props.className ?? '').split(/\s+/).includes('dsh-artel-factory__column'))
+  assert.equal(columns.length, 7, 'the app board collapses the checks stages into one column')
+  const cards = findAll(pane, (node) => node.type === 'button' && String(node.props.className ?? '').split(/\s+/).includes('dsh-artel-factory__card'))
+  assert.equal(cards.length, 2, 'one card per ticket')
+  assert.match(textOf(cards[0]), /#12/)
+  assert.match(textOf(cards[1]), /#13/)
+  assert.match(textOf(cards[1]), /У разбора есть вопросы/)
+  assert.match(paneText, /Фабрика включена\./, 'the board shows its event log')
+
+  cards[0].props.onClick()
+  for (let iteration = 0; iteration < 3; iteration += 1) {
+    await state.realm.settle()
+    opened = await state.realm.renderer.flush()
+  }
+  const detail = findByClass(opened, 'dsh-artel-factory__detail')
+  assert.ok(detail !== undefined, 'a ticket opens its panel')
+  const detailText = textOf(detail)
+  assert.match(detailText, /Тёмная тема/)
+  assert.match(detailText, /Спецификация/)
+  assert.match(detailText, /Добавить тёмную тему и переключатель в шапке\./)
+  assert.match(detailText, /Критерии/)
+  assert.match(detailText, /Тема переключается/)
+  assert.match(detailText, /Выбор сохраняется между запусками/)
+  assert.match(detailText, /Тема по умолчанию — системная/)
+  assert.match(detailText, /npm test/)
+  assert.match(detailText, /Агент правит тему\./, 'the ticket feed is rendered')
+  assert.ok(findButton(opened, 'Открыть сессию') !== undefined, 'the ticket offers its ordinary session')
+  const takeOver = findButton(opened, 'Взять вручную')
+  assert.ok(takeOver !== undefined, 'the ticket can be taken over manually')
+  takeOver.props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  assert.equal(takeoverCalls.length, 1, 'taking the ticket over reached the Host')
+  opened = await state.realm.renderer.flush()
+
+  findButton(opened, 'Назад к доске').props.onClick()
+  for (let iteration = 0; iteration < 2; iteration += 1) {
+    await state.realm.settle()
+    opened = await state.realm.renderer.flush()
+  }
+  findButton(findByClass(opened, 'dsh-artel-factory'), 'Настройки').props.onClick()
+  opened = await state.realm.renderer.flush()
+  const settings = findByClass(opened, 'dsh-artel-factory__settings')
+  assert.ok(settings !== undefined, 'the settings view opens')
+  findButton(opened, 'Сохранить').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  const saved = settingsCalls[0]
+  assert.ok(saved !== undefined, 'saving the board settings reached the Host')
+  assert.equal(saved.template, 'normal')
+  assert.equal(saved.enabled, true)
+  assert.deepEqual(saved.routes, ['solo', 'swarm', 'fusion', 'orchestrator'])
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
 })

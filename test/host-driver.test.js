@@ -3,11 +3,16 @@ import test from 'node:test'
 
 import {
   HostDriver,
+  addUsage,
+  breakdownOf,
+  clip,
   isEditTool,
   isTransientDelivery,
   mapSessionEvent,
   peerTextOf,
+  toolArgsOf,
   toolPathOf,
+  usageOf,
 } from '../lib/host-driver.js'
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
@@ -165,6 +170,8 @@ function fakeHost(options = {}) {
       if (name === 'sessions') return options.noSessions === true ? undefined : { get: (sessionId) => sessions.get(sessionId) }
       if (name === 'approval') return approval
       if (name === 'sandboxPolicy') return sandboxPolicy
+      if (name === 'tokenMeter') return options.tokenMeter
+      if (name === 'sessionProjections') return options.projections
       return undefined
     },
     on(event, handler) {
@@ -200,7 +207,48 @@ test('mapSessionEvent turns durable events into feed events', () => {
   )
   assert.deepEqual(
     mapSessionEvent({ type: 'tool/call', data: { name: 'edit', arguments: '{"path":"src/app.js"}' } }),
-    { kind: 'tool', tool: 'edit', text: 'edit {"path":"src/app.js"}', path: 'src/app.js', edit: true },
+    {
+      kind: 'tool',
+      tool: 'edit',
+      text: 'edit {"path":"src/app.js"}',
+      path: 'src/app.js',
+      edit: true,
+      args: '{\n  "path": "src/app.js"\n}',
+    },
+    'the arguments behind the chevron are the full call, not the 160-char preview',
+  )
+  assert.deepEqual(
+    mapSessionEvent({ type: 'tool/call', data: { callId: 'call-1', name: 'pwsh', arguments: { command: 'ls' } } }),
+    { kind: 'tool', tool: 'pwsh', text: 'pwsh {"command":"ls"}', callId: 'call-1', args: '{\n  "command": "ls"\n}' },
+  )
+  assert.deepEqual(
+    mapSessionEvent({
+      type: 'tool/result',
+      data: { message: { toolCallId: 'call-1', content: [{ type: 'text', text: 'a.js\n' }] } },
+    }),
+    { kind: 'tool-result', ok: true, text: 'a.js', callId: 'call-1' },
+    'a successful call keeps its output and the id of the call it answers',
+  )
+  assert.deepEqual(
+    mapSessionEvent({
+      type: 'tool/result',
+      data: { callId: 'call-0', message: { content: [{ type: 'text', text: 'legacy' }] } },
+    }),
+    { kind: 'tool-result', ok: true, text: 'legacy', callId: 'call-0' },
+    'a host that only reports the id on the event data still pairs the result',
+  )
+  assert.deepEqual(
+    mapSessionEvent({
+      type: 'tool/result',
+      data: { message: { toolCallId: 'call-2', isError: true, content: [{ type: 'text', text: 'no such file' }] } },
+    }),
+    { kind: 'tool-result', ok: false, text: 'no such file', callId: 'call-2' },
+    'a failed call is marked failed even when the host sends no error object',
+  )
+  assert.equal(
+    mapSessionEvent({ type: 'tool/result', data: { message: { content: [] } } }),
+    null,
+    'an empty result without a call id has nothing to show',
   )
   assert.deepEqual(
     mapSessionEvent({ type: 'tool/result', data: { error: { name: 'edit', reason: 'no such file' } } }),
@@ -245,6 +293,110 @@ test('isTransientDelivery only accepts the closing-window refusals', () => {
   assert.equal(isTransientDelivery({ code: 'subagent/unauthorized' }), false)
   assert.equal(isEditTool('apply_patch'), true)
   assert.equal(isEditTool('read'), false)
+})
+
+test('clip cuts to the budget and toolArgsOf keeps the whole call', () => {
+  assert.equal(clip('short', 20), 'short')
+  const long = 'a'.repeat(50)
+  const cut = clip(long, 20)
+  assert.equal(cut.length, 20, 'the ellipsis is part of the budget')
+  assert.ok(cut.endsWith('…'))
+  assert.equal(toolArgsOf(undefined), undefined)
+  assert.equal(toolArgsOf(''), undefined)
+  assert.equal(toolArgsOf('{"path":"a.js"}'), '{\n  "path": "a.js"\n}')
+  assert.equal(toolArgsOf('not json'), 'not json', 'a plain-text argument still shows as typed')
+  assert.ok(toolArgsOf({ command: 'x'.repeat(9000) }).length <= 4000 + 1, 'a huge payload is capped')
+})
+
+test('usageOf reads what the provider billed, and addUsage sums it up', () => {
+  assert.equal(usageOf(null), null)
+  assert.equal(usageOf({}), null)
+  assert.equal(usageOf({ inputTokens: 0, outputTokens: 0 }), null)
+  assert.deepEqual(usageOf({ inputTokens: 120, outputTokens: 30, cacheReadTokens: 400, cacheWriteTokens: 8 }), {
+    inputTokens: 120,
+    outputTokens: 30,
+    cacheReadTokens: 400,
+    cacheWriteTokens: 8,
+    totalTokens: 150,
+  })
+  assert.equal(usageOf({ inputTokens: 120, outputTokens: 30, totalTokens: 999 }).totalTokens, 999, 'a reported total wins over the sum')
+
+  const one = addUsage(null, { inputTokens: 10, outputTokens: 2, cacheReadTokens: 5, cacheWriteTokens: 1, totalTokens: 12 })
+  const two = addUsage(one, { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 2 })
+  assert.deepEqual(two, {
+    inputTokens: 11,
+    outputTokens: 3,
+    cacheReadTokens: 5,
+    cacheWriteTokens: 1,
+    totalTokens: 14,
+    requests: 2,
+  })
+})
+
+test('breakdownOf reads the token meter composition through the projection registry', () => {
+  assert.equal(breakdownOf(null, {}), null, 'a stripped profile shows no composition')
+  const asked = []
+  const registry = {
+    snapshot(session, keys) {
+      asked.push({ session, keys })
+      return { asOfSeq: 4, values: { contextBreakdown: { systemTokens: 900, toolsTokens: 2400, messageTokens: 6100 } } }
+    },
+  }
+  const session = fakeSession('s1')
+  assert.deepEqual(breakdownOf(registry, session), { system: 900, tools: 2400, messages: 6100 })
+  assert.deepEqual(asked[0].keys, ['contextBreakdown'], 'only the unit the row needs is computed')
+
+  const broken = { snapshot() { throw new Error('not prepared') } }
+  assert.equal(breakdownOf(broken, session), null, 'a Session with no sized request is not a failure')
+  const absent = { snapshot: () => ({ asOfSeq: 1, values: {} }) }
+  assert.equal(breakdownOf(absent, session), null)
+})
+
+test('the driver meters each agent context and spend as its events arrive', async () => {
+  const pressures = [
+    { pressureTokens: 40_000, contextWindow: 128_000 },
+    { pressureTokens: 96_000, contextWindow: 128_000 },
+  ]
+  const meter = { contextPressure: () => pressures.shift() ?? { pressureTokens: 96_000, contextWindow: 128_000 } }
+  const projections = {
+    snapshot: () => ({ asOfSeq: 3, values: { contextBreakdown: { systemTokens: 900, toolsTokens: 2500, messageTokens: 6000 } } }),
+  }
+  const host = fakeHost({ tokenMeter: meter, projections })
+  const driver = new HostDriver(host.ctx, { log: { warn() {} } })
+  await driver.init()
+  const handle = await driver.createAgent({ name: 'Orion', mode: 'swarm', projectPath: 'C:\\project', copyPath: 'C:\\copy', agentId: 'a1' })
+  assert.deepEqual(driver.statsOf(handle), { context: null, usage: null }, 'nothing is guessed before the first event')
+
+  const session = host.sessions.get(handle.sessionId)
+  const emit = host.handlers.get('session/event')
+  emit(session, { type: 'turn/start', data: {} })
+  assert.deepEqual(driver.statsOf(handle).context, {
+    tokens: 40_000,
+    window: 128_000,
+    breakdown: { system: 900, tools: 2500, messages: 6000 },
+    at: driver.statsOf(handle).context.at,
+  })
+
+  emit(session, {
+    type: 'assistant/message',
+    data: {
+      message: { content: [{ type: 'text', text: 'done' }] },
+      usage: { inputTokens: 1_200, outputTokens: 340, cacheReadTokens: 900 },
+    },
+  })
+  const stats = driver.statsOf(handle)
+  assert.equal(stats.context.tokens, 96_000, 'the ring follows the newest request')
+  assert.deepEqual(stats.usage, {
+    inputTokens: 1_200,
+    outputTokens: 340,
+    cacheReadTokens: 900,
+    cacheWriteTokens: 0,
+    totalTokens: 1_540,
+    requests: 1,
+  })
+  assert.deepEqual(driver.statsOf({ sessionId: 'unknown' }), { context: null, usage: null })
+  await driver.dispose()
+  assert.deepEqual(driver.statsOf(handle), { context: null, usage: null }, 'dispose forgets the numbers')
 })
 
 test('init requires the session controller and detects the peer stack', async () => {

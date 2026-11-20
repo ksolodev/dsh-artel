@@ -4,6 +4,200 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] — 2026-11-20
+
+### Added
+
+- **Автоочередь — an unattended night shift for a chat session.** A chat session can stack tasks in its
+  queue and run them one after another while the «Автоочередь» toggle is on. Each finished task is saved as
+  its own version (the project's check command decides whether it is a version), and the next task starts
+  from the last successful version: the copy is seeded from that version's path through `basePath`, while
+  the diff base stays the real project. Tasks stay ordinary Artel runs with their own mode and model —
+  `QUEUE_MODES` accepts `solo`, `swarm`, `conductor` and `fusion`, and the orchestrator is not a queue mode.
+- **Night-shift rules inside every turn.** An unattended run gets the night-shift suffix appended to every
+  turn: nobody will answer, so the agent must not ask or wait, must write the smallest reasonable
+  assumption down and continue; never send anything outward (no push, pull/merge request, publish, deploy,
+  tracker comment or message outside the machine), never raise a preview and never start a long-running dev
+  server, stay inside its copy and finish with a short summary. The first question of a task is
+  auto-answered («решай сам и запиши допущение»), the second parks the task.
+- **A finished task must pass the check.** With a queue running, the runner suggests the project's own check
+  command from its manifests (`suggestCheckCommand`, overtaken by the configured command) and runs it after
+  the agent's turn; a failed check sends the bounded output back to the same worker as a repair turn, at
+  most twice (`checkRepairPrompt`). The change set is scanned for secrets and junk (`scanHygiene`) and the
+  agent's text for an attempt to publish outward (`scanOutward`); either finding parks the task instead of
+  saving a version.
+- **«Отложенное» and how the queue ends.** A task that fails — the check still failing after two fixes, a
+  secret or junk in its diff, an attempt to publish outward, or a `BLOCKED:` report — is parked under a
+  `vf/parked-…` label and listed in «Отложенное»; the queue continues with the next task, and a parked task
+  can be retried from its own partial copy. A subscription limit only pauses the queue with `retryAt`
+  (`classifyFailure`); a lost login ends it. «Стоп» interrupts the agent and parks the partial work,
+  «Закончить после текущей» lets the current task finish, and switching the toggle off stops taking new
+  tasks. The queue also ends itself when it is empty, after the task limit, after three parks in a row, when
+  the login is lost, or when the disk is low (`freeDiskBytes`, at least 500 MB free). The run produces an
+  «Итоги автоочереди» result card with the saved versions and their checks, the parked tasks and the reason
+  the queue stopped.
+- **Фабрика — a per-project ticket pipeline maintained by agents.** A board per project carries tickets
+  through Входящие → Разбор → Работа → Тесты → Проверка → Ревью → Готово к PR → Готово, with «Ждёт вас» as
+  the human lane. The stage graph is explicit (`STAGE_TRANSITIONS`); triage is a read-only agent that
+  answers with `SPEC:`/`CRITERIA:`/`ROUTE:`/`ASSUMPTION:`/`QUESTION:` markers, takes the cheapest sufficient
+  route out of the allowed ones (`solo`/`swarm`/`fusion`/`orchestrator`) and may ask a `QUESTION:` that
+  sends the ticket to «Ждёт вас». Work, tests and the app check are ordinary Artel runs started in the
+  background; the factory may only cheapen the route, never upgrade it.
+- **Repair loop and «Ждёт вас».** A failed review, a failed test command or a failing app check goes back to
+  «Работа» as a repair turn with the findings, up to the template's repair rounds; when the rounds are
+  exhausted the ticket waits in «Ждёт вас» with the findings. The same lane collects triage questions, an
+  orchestrator plan waiting for approval (`approvePlan` starts the parts), an interrupted ticket, a run that
+  had nothing to do, and tickets postponed by hand. Every failure is recorded as a board and ticket event,
+  and the pump never dies on a ticket.
+- **Templates.** «Обычный» — two repair rounds, the app check and one reviewer; «Быстрый» — one round, no
+  app check; «Строгий» — three rounds, the app check and two reviewers. A board starts with the template's
+  `repairRounds`, `appCheck` and `reviewers`; the app check runs only for UI tickets (`ticketIsUi`) and only
+  when the template wants it, a preview command and Playwright are configured.
+- **Readiness check before a board is enabled.** A board can only be switched on when the project is a git
+  repository, has a first commit (the factory diffs against it) and at least one engine is logged in — these
+  three block; a test command (or a suggested one), a preview command and Playwright are reported but do not
+  block. `checkReadiness` probes the real project, and enabling without a passing report is refused.
+- **Tickets come from wherever they are written.** The «Входящие» field takes a title, text and up to eight
+  attachments; a GitHub issue arrives as `#12`, `owner/repo#12` or its URL through `gh issue view` and is
+  imported never twice (deduplicated by `sourceKey`); GitHub, GitLab, Jira and Linear are polled every five
+  minutes (`TRACKER_KINDS`, config per kind, a board's tracker list) with optional comment back; every board
+  belongs to one project.
+- **PR flow, merge and takeover.** A ticket in «Готово к PR» offers **Pull Request** — which requires a clean
+  working tree and a remote, creates `factory/ticket-<number>`, applies the ticket's run to the real project,
+  commits, pushes and calls `gh pr create --body <prBody>`, then comments the link back when the tracker asks
+  for it — «Влить», which applies the ticket's cumulative diff to the real project without a branch, and
+  «Вернуть с комментарием», which turns the comment into a repair turn. «Открыть сессию» attaches to the
+  ticket's session for a manual takeover, and «Пауза» stops the board's pump. The factory itself never sends
+  anything outward: push, PR and comments happen only when the user presses the button.
+- **Factory settings.** Per-role models (`triage`, `work`, `tests`, `review`), the allowed routes, workers per
+  ticket, tickets at once and per day, API-engine and low-subscription allowances, test/check/preview
+  commands, the «дописать тесты» quirk (`appendTests` asks for a test step when the change touched none) and
+  the board's tracker list; `settingsProblems` rejects an unknown template, an empty route list and
+  non-positive limits.
+- **Host plumbing — `lib/check.js`.** The guard rails around unattended work, kept pure and injectable:
+  `suggestCheckCommand` reads the manifests (`package.json` scripts in priority order, then a Makefile
+  `test:` target, `Cargo.toml`, `go.mod` and Python markers), `runCheck` runs one command through the
+  platform shell with a clean environment, a hard timeout that kills the whole process tree and a bounded
+  output tail, `scanHygiene` reports secret and junk paths plus credential-shaped added lines, `scanOutward`
+  matches only whole outward verb phrases, and `freeDiskBytes` reports free space without throwing.
+- **Host plumbing — `lib/trackers.js`.** `parseIssueRef` accepts a bare `#12`, `owner/repo#12` and a GitHub
+  issue URL; `normalizeIssue` gives every source a stable external id (`gh:<repo>#<n>`, `gl:<repo>#<iid>`,
+  `jira:<KEY>`, `lin:<identifier>`); `listTrackerIssues` and `commentTrackerIssue` cover GitHub, GitLab,
+  Jira and Linear with per-kind configs; `trackerProblems` reports what a tracker entry is missing. The
+  module never throws: a failing tracker becomes an `{error}` the board records.
+- **Host plumbing — queue.** `lib/queue.js` holds the queue record, task records and pure helpers
+  (`createQueueRecord`, `createTaskRecord`, `queueCounts`, `queueProgress`, `nextQueuedTask`,
+  `canTransitionTask`, `classifyFailure`, `parkedBranch`, `resultsCard`, `queueSummary`, `stopReasonLabel`)
+  and `QueueStore`, which keeps one JSON file per chat session under `state/queue`; `lib/queue-runner.js`
+  holds `QueueRunner` — the pump, the pre-flight, version saving and postponing, the stop modes, the check
+  and hygiene gates and the persistence of the «Итоги» card. The pre-flight makes you decide about earlier
+  versions that were never saved or postponed before the toggle turns on.
+- **Host plumbing — factory.** `lib/factory.js` holds the ticket board and ticket records, the stages and
+  `STAGE_TRANSITIONS`, the templates, the triage/review/app-check parsers, the readiness report, the PR
+  title and body builder and `TicketStore` (`state/tickets/boards.json`); `lib/factory-runner.js` holds
+  `FactoryRunner` — the pump, the stage machine, the repair loop, the read-only app check, the reviewer step,
+  PR/merge, the tracker poll and the attachment store. Attachments land under
+  `state/attachments/<boardId>/<ticketId>/`; mid-pipeline tickets are adopted after a host restart.
+- **Engine and run record.** `start` gains `basePath` (seed the copy from a saved version instead of the
+  project), `sandboxMode` (force the run's sandbox) and `autoqueue` (night-shift prompt suffix on every
+  turn); `planApproval` turns an orchestrator run into plan-then-approve, and `approvePlan(runId)` starts the
+  parts once the plan is approved. `toSummary` exposes `autoqueue`, `basePath`, `planApproval` and
+  `planApproved` so the client can show a run's origin and gate.
+- **Routes and data layout.** New routes under `/api/dsh-artel/queue` (summary, tasks, pre-flight,
+  autopilot, stop, finish-after-current, clear, retry/move, version save/postpone) and
+  `/api/dsh-artel/factory` (boards, settings, readiness, tickets, answers, approve-plan, repair, return,
+  comment, pull-request, merge, import, tracker poll); both return `503 artel/unavailable` on a host without
+  the runner. Queue records live in `<DSH_HOME>/artel/<profile>/state/queue`, ticket boards in
+  `<DSH_HOME>/artel/<profile>/state/tickets/boards.json` and attachments in
+  `<DSH_HOME>/artel/<profile>/state/attachments/`.
+- **Version follow-ups.** In «История» every auto-queue run carries an «Автоочередь» tag in the rail and in
+  the run header; the «Итоги автоочереди» card offers «Открыть» a saved version, «Доработать» it as a new
+  task seeded from that version's copy (`basePath`) and «Откатить» it (the version run is discarded and
+  history refreshed). A ticket keeps its last five work versions and continues from a surviving copy when
+  the latest one is gone.
+- **Manual takeover and ticket versions.** «Открыть сессию» attaches the user to a ticket's run; «Взять
+  вручную» interrupts live ticket runs, parks the ticket in «Ждёт вас» as postponed and takes it off the
+  pipeline; the factory records the run and copy path of every work version so the ticket panel can show
+  them and a retried ticket resumes from the last surviving version.
+- **«Сейчас» — what each agent does and what the run waits for.** While a run is active or waiting, a strip
+  under the header lists every agent with its state dot, its last step — the tool call it is running (`write
+  src/app.js`) or «writing a reply» — the time spent on the current turn and the fill of its context window in
+  tokens and percent. The header itself names the wait («Waiting for your answer», «Waiting for plan approval»,
+  «Waiting for Nova», «The agents are working», «Assembling the result») and how long it has been waiting, so a
+  run parked at the plan gate says what it is parked on. Both come from the run summary the Host already sends
+  (`activity`, `turns`, `turnStartedAt`, `waitingFor` in `toSummary`), so the live state costs no extra request
+  and never enters the JSONL feed.
+- **Tool rows open.** A tool call that has something to show — the arguments the agent passed and the output (or
+  the error) the tool returned — is now a button: it expands onto both, the chevron turns down, `aria-expanded`
+  follows, and «Свернуть все» closes every open row. Rows that only repeat the name (`read README.md`) stay plain.
+  The driver keeps `tool/call` arguments (capped at 4000 characters) and returns successful `tool/result` content
+  (capped at 1200) as a `tool-result` event, matched to its call by `callId`.
+- **Context and spend meters.** Every agent row shows how full its context window is — tokens of the window, the
+  percent and a bar that turns amber at 50% and red at 80% — with the composition (system, tools, messages) in the
+  tooltip; the run header adds the tokens the whole run has spent, with input, output and cache in the tooltip.
+  The numbers come from the official token metering: `tokenMeter.contextPressure(session)` for the prompt size and
+  the window, the `contextBreakdown` projection for the composition, and the provider's `usage` on every
+  `assistant/message` for the spend.
+- **Tests, docs and locale.** New `test/check.test.js`, `test/trackers.test.js`, `test/queue-runner.test.js`
+  and `test/factory-runner.test.js` suites (23 and 26 tests in the first two) and new engine, client and
+  routes flows for the queue and the Factory, plus engine, client and host-driver tests for the live strip,
+  the tool disclosure and the context meters; README, ARCHITECTURE,
+  the en/ru/zh guides and the plugin's locale descriptions now cover Автоочередь and Фабрика; version
+  `0.8.0` in `package.json`.
+
+## [0.7.0] — 2026-11-20
+
+### Added
+
+- **Orchestrator mode — a large goal split into verified parts.** You describe the goal; a planner reads
+  the project and answers with a plan: up to `orchestratorParts` independent parts (three by default,
+  four at most), each with a title, a goal, a `DONE` condition and the files it expects to touch. The
+  plan arrives as a feed **Plan** card before any work starts, so the split is visible up front. The
+  planner is the only agent at start and it runs in the `read-only` sandbox.
+- **One copy and two agents per part.** After the plan, Artel makes one copy of the project per part,
+  starts a part agent in each (ordinary DSH sessions, titled `Artel · Part N — <title> · <agent>`) and a
+  reviewer next to it (`Artel · Review · Part N — <title> · <agent>`, pinned to `read-only`). The part
+  agents inherit the chat session's sandbox mode; separate copies mean parallel parts cannot collide on
+  disk and the planner never edits anything.
+- **A reviewer checks every part against the plan.** When a part agent finishes, its reviewer reads the
+  changes and compares them with the part's written conditions, then answers `VERDICT: accept` or
+  `VERDICT: rework` with a `PROBLEMS:` list. A reworked part goes back to its agent with those problems,
+  at most twice; after that it is accepted with the reviewer's remarks on record. A part that fails its
+  reviewer never reaches you, and a part agent or reviewer that stops fails the whole run before
+  assembly.
+- **Assembly with a merger for shared files.** When every part is accepted, the accepted changes are
+  written into one assembled copy. Files that only one part changed are applied directly; files that
+  several parts changed with identical content are applied once; real conflicts are bundled under
+  `.dsh-artel/conflicts/<nn>/` in the assembly copy and handed to a merger agent (ordinary session,
+  role `merger`), which resolves them at their real paths. Artel then validates every conflicted file
+  against the base state: a file the merger left untouched is unresolved, the merger is asked once more,
+  and a second failure fails the run with the merge recorded — the assembled copy is kept for the diff,
+  but `POST /api/dsh-artel/runs/:id/apply` answers `409 artel/merge-incomplete` until the work is
+  discarded.
+- **Plan and merge in the run record.** `run.plan` keeps the summary and each part's title, goal,
+  conditions, files, status (`pending`/`working`/`reviewing`/`rework`/`accepted`/`failed`), rework
+  rounds, remarks and the worker/reviewer names; `run.merge` keeps `conflicts`, `unresolved` and
+  `merged`. `toSummary` exposes both, the feed reuses the existing `plan`/`status`/`error` kinds, and the
+  run page gets a **Parts** card with per-part status chips and the plan's done conditions. Stage
+  (`planning`/`working`/`merging`/`merge-stopped`/`assembled`) stays host-only, like Fusion and
+  Conductor.
+- **Host plumbing.** `lib/orchestrator.js` — a pure module with the plan markers (`PLAN:`, `PART n:`,
+  `GOAL:`, `DONE:`, `FILES:`), the review markers (`VERDICT:`, `PROBLEMS:`), `parsePlan`, `parseReview`,
+  `planCard`, `assembledCard`, `partLabel`, `MAX_ORCHESTRATOR_PARTS` and `MAX_ORCHESTRATOR_REWORK` —
+  covered by `test/orchestrator.test.js`; the engine runs the orchestrator stage machine (planner →
+  parts → per-part review/rework loop → assembly → merger validation), applies the same interruption and
+  failure rules as Conductor, cleans up part copies once assembled and never writes the project before
+  **Apply**.
+- **`orchestratorParts` configuration.** New key in the plugin configuration (default `3`, clamped
+  `2–4`); a plan with more parts than the limit is folded into the last kept part, with the folded goals
+  and conditions appended.
+- **Tests, docs and locale.** Seven new Orchestrator flow tests in `test/engine.test.js` (start and
+  planning, happy path with a rework round and assembly and apply, conflicting files and the merger,
+  a merger that fails twice, stopping during the merge, a worker that stops, an unreadable plan) and
+  thirteen `test/orchestrator.test.js` unit tests; README, ARCHITECTURE, the en/ru/zh guide and the
+  plugin's locale description now cover Orchestrator; version `0.7.0` in `package.json` and
+  `lib/index.js`.
+
 ## [0.6.0] — 2026-11-20
 
 ### Added

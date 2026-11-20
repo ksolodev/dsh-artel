@@ -3,7 +3,7 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import test from 'node:test'
 
-import { registerArtelRoutes, API_PREFIX } from '../lib/routes.js'
+import { registerArtelRoutes, registerFactoryRoutes, registerQueueRoutes, API_PREFIX } from '../lib/routes.js'
 
 /** Fake Host web server that keeps the routes it was given. */
 function fakeWebServer() {
@@ -400,4 +400,394 @@ test('a failing engine becomes a JSON error with its code and status', async () 
   assert.equal(response.status, 404)
   assert.equal(response.body.error, 'Run not found')
   assert.equal(response.body.code, 'artel/not-found')
+})
+
+/** Fake queue runner recording exactly what the routes forwarded. */
+function fakeQueueRunner() {
+  const calls = []
+  const runner = {
+    calls,
+    async summary(sessionId, options) {
+      calls.push({ method: 'summary', args: [sessionId, options] })
+      return { sessionId, projectPath: options?.projectPath ?? null, autopilot: false, counts: { total: 0 } }
+    },
+    async addTasks(input) {
+      calls.push({ method: 'addTasks', args: [input] })
+      return { added: input.texts.length + (input.task ? 1 : 0), queue: { sessionId: input.sessionId } }
+    },
+    async preflight(sessionId, options) {
+      calls.push({ method: 'preflight', args: [sessionId, options] })
+      return { sessionId, pendingVersions: [], limit: 20 }
+    },
+    async setAutopilot(input) {
+      calls.push({ method: 'setAutopilot', args: [input] })
+      return { queue: { autopilot: input.autopilot }, blocked: null }
+    },
+    async stop(sessionId) {
+      calls.push({ method: 'stop', args: [sessionId] })
+      return { sessionId, stopReason: 'stopped' }
+    },
+    async finishAfterCurrent(sessionId) {
+      calls.push({ method: 'finishAfterCurrent', args: [sessionId] })
+      return { sessionId, stopAfterCurrent: true }
+    },
+    async clearFinished(sessionId) {
+      calls.push({ method: 'clearFinished', args: [sessionId] })
+      return { sessionId, tasks: [] }
+    },
+    async removeTask(sessionId, taskId) {
+      calls.push({ method: 'removeTask', args: [sessionId, taskId] })
+      return { sessionId, tasks: [] }
+    },
+    async retryTask(sessionId, taskId) {
+      calls.push({ method: 'retryTask', args: [sessionId, taskId] })
+      return { sessionId, tasks: [] }
+    },
+    async moveTask(sessionId, taskId, options) {
+      calls.push({ method: 'moveTask', args: [sessionId, taskId, options] })
+      return { sessionId, tasks: [] }
+    },
+    async saveVersion(sessionId, runId) {
+      calls.push({ method: 'saveVersion', args: [sessionId, runId] })
+      return { saved: true }
+    },
+    async postponeVersion(sessionId, runId) {
+      calls.push({ method: 'postponeVersion', args: [sessionId, runId] })
+      return { sessionId, ignored: [runId] }
+    },
+  }
+  return runner
+}
+
+/** Fake factory runner recording exactly what the routes forwarded. */
+function fakeFactoryRunner() {
+  const calls = []
+  const record = (method, ...args) => calls.push({ method, args })
+  const ticket = (overrides = {}) => ({ id: 't-1', number: 1, stage: 'incoming', ...overrides })
+  const runner = {
+    calls,
+    listBoards() {
+      record('listBoards')
+      return [{ id: 'b-1' }]
+    },
+    view(boardId) {
+      record('view', boardId)
+      return { board: { id: boardId }, tickets: [ticket()] }
+    },
+    async createBoard(input) {
+      record('createBoard', input)
+      return { board: { id: 'b-1', projectPath: input.projectPath }, created: true }
+    },
+    async updateBoard(boardId, patch) {
+      record('updateBoard', boardId, patch)
+      return { id: boardId, enabled: patch?.enabled === true }
+    },
+    async checkReadiness(boardId) {
+      record('checkReadiness', boardId)
+      return { board: { id: boardId }, readiness: { ready: true, checks: [] } }
+    },
+    async addTicket(boardId, input) {
+      record('addTicket', boardId, input)
+      return ticket({ title: input.title, attachments: input.attachments })
+    },
+    async ticketView(boardId, ticketId, options) {
+      record('ticketView', boardId, ticketId, options)
+      return { ticket: ticket({ id: ticketId }), feed: [{ seq: 1 }] }
+    },
+    async answerQuestions(boardId, ticketId, input) {
+      record('answerQuestions', boardId, ticketId, input)
+      return ticket({ id: ticketId, stage: 'incoming' })
+    },
+    async approvePlan(boardId, ticketId) {
+      record('approvePlan', boardId, ticketId)
+      return ticket({ id: ticketId, stage: 'working' })
+    },
+    async repairAction(boardId, ticketId, input) {
+      record('repairAction', boardId, ticketId, input)
+      return ticket({ id: ticketId, stage: 'working' })
+    },
+    async returnToFactory(boardId, ticketId, input) {
+      record('returnToFactory', boardId, ticketId, input)
+      return ticket({ id: ticketId, stage: 'incoming' })
+    },
+    async returnWithComment(boardId, ticketId, input) {
+      record('returnWithComment', boardId, ticketId, input)
+      return ticket({ id: ticketId, stage: 'working' })
+    },
+    async openPullRequest(boardId, ticketId) {
+      record('openPullRequest', boardId, ticketId)
+      return ticket({ id: ticketId, stage: 'done', pr: { url: 'https://github.com/acme/repo/pull/7' } })
+    },
+    async mergeTicket(boardId, ticketId) {
+      record('mergeTicket', boardId, ticketId)
+      return ticket({ id: ticketId, stage: 'done' })
+    },
+    async takeOver(boardId, ticketId) {
+      record('takeOver', boardId, ticketId)
+      return ticket({ id: ticketId, stage: 'waiting', waiting: { kind: 'postponed' } })
+    },
+    async importGithubIssue(boardId, ref) {
+      record('importGithubIssue', boardId, ref)
+      return ticket({ id: 't-2', number: 2 })
+    },
+    async pollTrackers(onlyBoardId) {
+      record('pollTrackers', onlyBoardId)
+      return { added: 0, errors: [] }
+    },
+  }
+  return runner
+}
+
+test('the queue route requires a session and resolves the project', async () => {
+  const queueRunner = fakeQueueRunner()
+  const { webServer, resolved } = setup({ queueRunner })
+  assert.equal(webServer.routes.length, 6)
+  const missing = await call(webServer.routes, `${API_PREFIX}/queue`)
+  assert.equal(missing.status, 400)
+  assert.equal(missing.body.code, 'artel/bad-request')
+  assert.equal(missing.body.error, 'sessionId is required')
+
+  const response = await call(webServer.routes, `${API_PREFIX}/queue?sessionId=s1`)
+  assert.equal(response.status, 200)
+  assert.equal(response.body.sessionId, 's1')
+  assert.equal(response.body.projectPath, 'C:\\work\\app')
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'summary', args: ['s1', { projectPath: 'C:\\work\\app' }] })
+  assert.ok(resolved.includes('s1'))
+
+  const badMethod = await call(webServer.routes, `${API_PREFIX}/queue?sessionId=s1`, { method: 'DELETE' })
+  assert.equal(badMethod.status, 405)
+  assert.equal(badMethod.body.code, 'artel/method')
+})
+
+test('the queue route forwards new tasks to addTasks', async () => {
+  const queueRunner = fakeQueueRunner()
+  const { webServer } = setup({ queueRunner })
+  const response = await call(webServer.routes, `${API_PREFIX}/queue`, {
+    method: 'POST',
+    body: { sessionId: 's1', texts: ['First', 'Second'], task: 'Third', mode: 'swarm', model: 'fast', prepend: true },
+  })
+  assert.equal(response.status, 200)
+  assert.equal(response.body.added, 3)
+  assert.deepEqual(queueRunner.calls.at(-1), {
+    method: 'addTasks',
+    args: [{ sessionId: 's1', projectPath: 'C:\\work\\app', texts: ['First', 'Second'], task: 'Third', mode: 'swarm', model: 'fast', prepend: true, basePath: null }],
+  })
+
+  const seeded = await call(webServer.routes, `${API_PREFIX}/queue`, { method: 'POST', body: { sessionId: 's1', task: 'Rework the version', basePath: 'C:\\work\\copies\\run-1' } })
+  assert.equal(seeded.status, 200)
+  assert.equal(queueRunner.calls.at(-1).args[0].basePath, 'C:\\work\\copies\\run-1')
+
+  const bare = await call(webServer.routes, `${API_PREFIX}/queue`, { method: 'POST', body: { sessionId: 's1', texts: ['Only'] } })
+  assert.equal(bare.status, 200)
+  assert.deepEqual(queueRunner.calls.at(-1).args[0], {
+    sessionId: 's1',
+    projectPath: 'C:\\work\\app',
+    texts: ['Only'],
+    task: '',
+    mode: 'solo',
+    model: null,
+    prepend: false,
+    basePath: null,
+  })
+
+  const noSession = await call(webServer.routes, `${API_PREFIX}/queue`, { method: 'POST', body: { texts: ['x'] } })
+  assert.equal(noSession.status, 400)
+  assert.equal(noSession.body.code, 'artel/bad-request')
+})
+
+test('the queue autopilot route forwards its flags and decisions', async () => {
+  const queueRunner = fakeQueueRunner()
+  const { webServer } = setup({ queueRunner })
+  const response = await call(webServer.routes, `${API_PREFIX}/queue/autopilot`, {
+    method: 'POST',
+    body: {
+      sessionId: 's1',
+      autopilot: true,
+      limit: 3,
+      checkCommand: 'npm test',
+      checkDisabled: true,
+      saveVersionRunIds: ['run-1', 5],
+      postponeVersionRunIds: ['run-2'],
+      decisions: true,
+    },
+  })
+  assert.equal(response.status, 200)
+  assert.deepEqual(queueRunner.calls.at(-1), {
+    method: 'setAutopilot',
+    args: [{
+      sessionId: 's1',
+      projectPath: 'C:\\work\\app',
+      autopilot: true,
+      limit: 3,
+      checkCommand: 'npm test',
+      checkDisabled: true,
+      saveVersionRunIds: ['run-1'],
+      postponeVersionRunIds: ['run-2'],
+      decisions: true,
+    }],
+  })
+
+  const preflight = await call(webServer.routes, `${API_PREFIX}/queue/preflight?sessionId=s1`)
+  assert.equal(preflight.status, 200)
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'preflight', args: ['s1', { projectPath: 'C:\\work\\app' }] })
+
+  const wrongMethod = await call(webServer.routes, `${API_PREFIX}/queue/autopilot`)
+  assert.equal(wrongMethod.status, 405)
+})
+
+test('the queue task and version sub-routes forward ids and verbs', async () => {
+  const queueRunner = fakeQueueRunner()
+  const { webServer } = setup({ queueRunner })
+  await call(webServer.routes, `${API_PREFIX}/queue/tasks/t-1/retry`, { method: 'POST', body: { sessionId: 's1' } })
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'retryTask', args: ['s1', 't-1'] })
+
+  await call(webServer.routes, `${API_PREFIX}/queue/tasks/t-1/move`, { method: 'POST', body: { sessionId: 's1', direction: 'down' } })
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'moveTask', args: ['s1', 't-1', { direction: 'down' }] })
+
+  await call(webServer.routes, `${API_PREFIX}/queue/tasks/t-1?sessionId=s1`, { method: 'DELETE' })
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'removeTask', args: ['s1', 't-1'] })
+
+  await call(webServer.routes, `${API_PREFIX}/queue/versions/run-1/save`, { method: 'POST', body: { sessionId: 's1' } })
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'saveVersion', args: ['s1', 'run-1'] })
+
+  await call(webServer.routes, `${API_PREFIX}/queue/versions/run-1/postpone`, { method: 'POST', body: { sessionId: 's1' } })
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'postponeVersion', args: ['s1', 'run-1'] })
+
+  const unknown = await call(webServer.routes, `${API_PREFIX}/queue/versions/run-1/nope`, { method: 'POST', body: { sessionId: 's1' } })
+  assert.equal(unknown.status, 404)
+  const badTask = await call(webServer.routes, `${API_PREFIX}/queue/tasks/t-1`, { method: 'POST', body: { sessionId: 's1' } })
+  assert.equal(badTask.status, 404)
+})
+
+test('the queue route answers 503 when no runner is wired', async () => {
+  const webServer = fakeWebServer()
+  registerQueueRoutes({ webServer, queueRunner: null, resolveProjectPath: async () => 'C:\\work\\app' })
+  const response = await call(webServer.routes, `${API_PREFIX}/queue?sessionId=s1`)
+  assert.equal(response.status, 503)
+  assert.equal(response.body.code, 'artel/unavailable')
+})
+
+test('the factory route lists, creates and views boards', async () => {
+  const factoryRunner = fakeFactoryRunner()
+  const { webServer } = setup({ factoryRunner })
+  assert.equal(webServer.routes.length, 6)
+  const list = await call(webServer.routes, `${API_PREFIX}/factory`)
+  assert.equal(list.status, 200)
+  assert.deepEqual(list.body, { boards: [{ id: 'b-1' }] })
+
+  const missing = await call(webServer.routes, `${API_PREFIX}/factory`, { method: 'POST', body: {} })
+  assert.equal(missing.status, 400)
+  assert.equal(missing.body.error, 'projectPath is required')
+
+  const created = await call(webServer.routes, `${API_PREFIX}/factory`, { method: 'POST', body: { projectPath: 'C:\\work\\app', name: 'Demo' } })
+  assert.equal(created.status, 200)
+  assert.equal(created.body.board.id, 'b-1')
+  assert.deepEqual(factoryRunner.calls.at(-1), { method: 'createBoard', args: [{ projectPath: 'C:\\work\\app', name: 'Demo' }] })
+
+  const view = await call(webServer.routes, `${API_PREFIX}/factory/b-1`)
+  assert.equal(view.status, 200)
+  assert.equal(view.body.board.id, 'b-1')
+  assert.equal(view.body.tickets.length, 1)
+  assert.deepEqual(factoryRunner.calls.find((entry) => entry.method === 'view'), { method: 'view', args: ['b-1'] })
+
+  const wrongMethod = await call(webServer.routes, `${API_PREFIX}/factory/b-1`, { method: 'POST' })
+  assert.equal(wrongMethod.status, 405)
+})
+
+test('the factory ticket POST forwards attachments and the source', async () => {
+  const factoryRunner = fakeFactoryRunner()
+  const { webServer } = setup({ factoryRunner })
+  const attachments = [
+    { name: 'shot.png', data: 'aGVsbG8=' },
+    { name: 'big.zip', data: 'AAECAw==' },
+  ]
+  const response = await call(webServer.routes, `${API_PREFIX}/factory/b-1/tickets`, {
+    method: 'POST',
+    body: { title: 'Add the screen', text: 'Needs a dark theme.', attachments, source: { kind: 'github', externalId: 'gh:acme/repo#5' } },
+  })
+  assert.equal(response.status, 200)
+  assert.equal(response.body.ticket.title, 'Add the screen')
+  const forwarded = factoryRunner.calls.at(-1)
+  assert.equal(forwarded.method, 'addTicket')
+  assert.equal(forwarded.args[0], 'b-1')
+  assert.deepEqual(forwarded.args[1].attachments, attachments, 'the base64 payload passes through untouched')
+  assert.deepEqual(forwarded.args[1].source, { kind: 'github', externalId: 'gh:acme/repo#5' })
+  assert.equal(forwarded.args[1].title, 'Add the screen')
+
+  const view = await call(webServer.routes, `${API_PREFIX}/factory/b-1/tickets/t-1?cursor=4`)
+  assert.equal(view.status, 200)
+  assert.deepEqual(factoryRunner.calls.at(-1), { method: 'ticketView', args: ['b-1', 't-1', { cursor: 4 }] })
+})
+
+test('the factory ticket action routes forward their payloads', async () => {
+  const factoryRunner = fakeFactoryRunner()
+  const { webServer } = setup({ factoryRunner })
+  const actions = [
+    ['answers', { text: 'Use the dark theme.', answers: ['Dark theme'] }, 'answerQuestions'],
+    ['approve-plan', {}, 'approvePlan'],
+    ['repair', { action: 'more' }, 'repairAction'],
+    ['return', { text: 'Back to triage', title: 'Rework' }, 'returnToFactory'],
+    ['comment', { comment: 'Fix the header' }, 'returnWithComment'],
+    ['pull-request', {}, 'openPullRequest'],
+    ['merge', {}, 'mergeTicket'],
+    ['takeover', {}, 'takeOver'],
+  ]
+  for (const [verb, payload, method] of actions) {
+    const response = await call(webServer.routes, `${API_PREFIX}/factory/b-1/tickets/t-1/${verb}`, { method: 'POST', body: payload })
+    assert.equal(response.status, 200, `${verb} answers 200`)
+    assert.equal(factoryRunner.calls.at(-1).method, method)
+    assert.equal(factoryRunner.calls.at(-1).args[0], 'b-1')
+    assert.equal(factoryRunner.calls.at(-1).args[1], 't-1')
+  }
+  const byMethod = (method) => factoryRunner.calls.find((entry) => entry.method === method)
+  assert.deepEqual(byMethod('answerQuestions').args[2], { text: 'Use the dark theme.', answers: ['Dark theme'] })
+  assert.deepEqual(byMethod('repairAction').args, ['b-1', 't-1', { action: 'more' }])
+  assert.deepEqual(byMethod('returnToFactory').args[2], { text: 'Back to triage', title: 'Rework' })
+  assert.deepEqual(byMethod('returnWithComment').args[2], { comment: 'Fix the header' })
+
+  const unknown = await call(webServer.routes, `${API_PREFIX}/factory/b-1/tickets/t-1/nope`, { method: 'POST', body: {} })
+  assert.equal(unknown.status, 404)
+})
+
+test('the factory settings, readiness, poll and import routes forward', async () => {
+  const factoryRunner = fakeFactoryRunner()
+  const { webServer } = setup({ factoryRunner })
+  await call(webServer.routes, `${API_PREFIX}/factory/b-1/settings`, { method: 'POST', body: { template: 'fast', enabled: false } })
+  assert.deepEqual(factoryRunner.calls.at(-1), { method: 'updateBoard', args: ['b-1', { template: 'fast', enabled: false }] })
+
+  await call(webServer.routes, `${API_PREFIX}/factory/b-1/readiness`, { method: 'POST', body: {} })
+  assert.deepEqual(factoryRunner.calls.at(-1), { method: 'checkReadiness', args: ['b-1'] })
+
+  await call(webServer.routes, `${API_PREFIX}/factory/b-1/poll`, { method: 'POST', body: {} })
+  assert.deepEqual(factoryRunner.calls.at(-1), { method: 'pollTrackers', args: ['b-1'] })
+
+  await call(webServer.routes, `${API_PREFIX}/factory/poll-trackers`, { method: 'POST', body: { boardId: 'b-1' } })
+  assert.deepEqual(factoryRunner.calls.at(-1), { method: 'pollTrackers', args: ['b-1'] })
+
+  const imported = await call(webServer.routes, `${API_PREFIX}/factory/b-1/import`, { method: 'POST', body: { ref: '#12' } })
+  assert.equal(imported.status, 200)
+  assert.equal(imported.body.ticket.number, 2)
+  assert.deepEqual(factoryRunner.calls.at(-1), { method: 'importGithubIssue', args: ['b-1', '#12'] })
+})
+
+test('the factory route answers 503 when no runner is wired', async () => {
+  const webServer = fakeWebServer()
+  registerFactoryRoutes({ webServer, factoryRunner: null, resolveProjectPath: async () => 'C:\\work\\app' })
+  const response = await call(webServer.routes, `${API_PREFIX}/factory`)
+  assert.equal(response.status, 503)
+  assert.equal(response.body.code, 'artel/unavailable')
+})
+
+test('the queue and factory routes stay loopback-only', async () => {
+  const webServer = fakeWebServer()
+  registerQueueRoutes({ webServer, queueRunner: fakeQueueRunner(), resolveProjectPath: async () => 'C:\\work\\app' })
+  registerFactoryRoutes({ webServer, factoryRunner: fakeFactoryRunner(), resolveProjectPath: async () => 'C:\\work\\app' })
+  const queue = await call(webServer.routes, `${API_PREFIX}/queue?sessionId=s1`, { remote: '10.0.0.5' })
+  assert.equal(queue.status, 403)
+  assert.equal(queue.body.code, 'artel/forbidden')
+  const factory = await call(webServer.routes, `${API_PREFIX}/factory`, { remote: '10.0.0.5' })
+  assert.equal(factory.status, 403)
+  assert.equal(factory.body.code, 'artel/forbidden')
+  const crossSite = await call(webServer.routes, `${API_PREFIX}/factory`, { headers: { 'sec-fetch-site': 'cross-site' } })
+  assert.equal(crossSite.status, 403)
 })

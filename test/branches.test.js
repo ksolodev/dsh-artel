@@ -7,7 +7,26 @@ import path from 'node:path'
 import { BranchService, BranchError } from '../lib/branches.js'
 import { QueueStore, QUEUE_MODEL_BRANCHES } from '../lib/queue.js'
 
-async function fixture() {
+function makeEngine({ assist = null } = {}) {
+  const calls = { markApplied: [], refreshInstall: [], assists: [] }
+  return {
+    calls,
+    async assist({ copyPath, prompt, title }) {
+      calls.assists.push({ copyPath, prompt, title })
+      if (assist !== null) return await assist({ copyPath, prompt })
+      return { message: 'no changes' }
+    },
+    async markApplied(runId) {
+      calls.markApplied.push(runId)
+    },
+    async refreshInstall(runId) {
+      calls.refreshInstall.push(runId)
+      return null
+    },
+  }
+}
+
+async function fixture({ assist = null } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'artel-branches-'))
   const stateDir = path.join(root, 'state')
   const projectPath = path.join(root, 'project')
@@ -17,9 +36,44 @@ async function fixture() {
   const store = new QueueStore({ dir: path.join(stateDir, 'queue') })
   await store.init()
   await store.ensure('s1', { projectPath })
-  const service = new BranchService({ store, stateDir, exclude: ['node_modules'] })
+  let clock = 1_700_000_000_000
+  const engine = makeEngine({ assist })
+  const service = new BranchService({ store, stateDir, engine, exclude: ['node_modules'], now: () => (clock += 1) })
   await service.ensure('s1')
-  return { root, stateDir, projectPath, store, service, cleanup: () => fs.rm(root, { recursive: true, force: true }) }
+  return { root, stateDir, projectPath, store, service, engine, cleanup: () => fs.rm(root, { recursive: true, force: true }) }
+}
+
+async function commitOnBranch(fx, branch, { file, content, subject, parent = null }) {
+  const git = await fx.service.ensure('s1')
+  const base = parent ?? branch.tipCommit ?? branch.baseCommit
+  const work = path.join(fx.root, `work-${Math.random().toString(36).slice(2, 8)}`)
+  await git.materialize(work, base)
+  await fs.writeFile(path.join(work, file), content)
+  const commit = await git.commitDir(work, { parent: base, message: subject })
+  await git.updateRef(branch.ref, commit, base)
+  const queue = await fx.store.get('s1')
+  await fx.store.patch('s1', {
+    branches: queue.branches.map((entry) => (entry.id === branch.id ? { ...entry, tipCommit: commit } : entry)),
+  })
+  return commit
+}
+
+async function commitToApplied(fx, { file, content, subject }) {
+  const git = await fx.service.ensure('s1')
+  const queue = await fx.store.get('s1')
+  const head = queue.project.head
+  const work = path.join(fx.root, `applied-${Math.random().toString(36).slice(2, 8)}`)
+  await git.materialize(work, head)
+  await fs.writeFile(path.join(work, file), content)
+  const commit = await git.commitDir(work, { parent: head, message: subject })
+  await git.updateRef('refs/heads/applied', commit, head)
+  // Deviation from the plan: moving the applied ref alone would leave the
+  // project work tree out of sync with it, and apply() reads that difference as
+  // drift. A real apply writes the files back, so the helper does the same.
+  await fs.mkdir(path.dirname(path.join(fx.projectPath, file)), { recursive: true })
+  await fs.writeFile(path.join(fx.projectPath, file), content)
+  await fx.store.patch('s1', { project: { ...queue.project, head: commit } })
+  return commit
 }
 
 test('ensure() creates the app repository, imports the project and patches the queue', async () => {
@@ -134,6 +188,155 @@ test('projectState() reports uncommitted project changes as drift', async () => 
     const state = await fx.service.projectState('s1')
     assert.equal(state.drift.dirty, true)
     assert.ok(state.drift.files.includes('README.md'))
+  } finally {
+    await fx.cleanup()
+  }
+})
+
+test('apply() fast-forwards a branch cut from the applied head', async () => {
+  const fx = await fixture()
+  try {
+    const { branch } = await fx.service.createBranch('s1', { name: 'Fast' })
+    const commit = await commitOnBranch(fx, branch, { file: 'src/app.js', content: 'export const answer = 2\n', subject: 'Answer 2' })
+    await fx.store.patch('s1', {
+      tasks: [{ id: 'q-1', text: 'Answer 2', title: 'Answer 2', mode: 'solo', status: 'passed', runId: 'run-1', commit, branchId: branch.id, files: [], changeCount: 1 }],
+    })
+
+    const result = await fx.service.apply('s1', { branchId: branch.id })
+
+    assert.equal(result.applied.commit, commit)
+    assert.equal(result.applied.files, 1)
+    assert.equal(result.applied.driftCommit, null)
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 2\n')
+    assert.deepEqual(fx.engine.calls.markApplied, ['run-1'])
+    const after = await fx.store.get('s1')
+    assert.equal(after.project.head, commit)
+    assert.equal(after.project.applied.branchId, branch.id)
+    assert.ok(after.branches[0].appliedAt)
+  } finally {
+    await fx.cleanup()
+  }
+})
+
+test('apply() merges when the project moved on after the branch was cut', async () => {
+  const fx = await fixture()
+  try {
+    const { branch } = await fx.service.createBranch('s1', { name: 'Later' })
+    const branchCommit = await commitOnBranch(fx, branch, { file: 'src/app.js', content: 'export const answer = 2\n', subject: 'Branch answer' })
+    const appliedCommit = await commitToApplied(fx, { file: 'README.md', content: '# Demo moved\n', subject: 'Project moved' })
+
+    const result = await fx.service.apply('s1', { branchId: branch.id })
+
+    assert.match(result.applied.commit, /^[0-9a-f]{40}$/)
+    const git = await fx.service.ensure('s1')
+    const [entry] = await git.log(result.applied.commit, { max: 1 })
+    assert.deepEqual([...entry.parents].sort(), [appliedCommit, branchCommit].sort())
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 2\n')
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'README.md'), 'utf8'), '# Demo moved\n')
+  } finally {
+    await fx.cleanup()
+  }
+})
+
+test('apply() rebuilds only the commits that stay checked', async () => {
+  const fx = await fixture()
+  try {
+    const { branch } = await fx.service.createBranch('s1', { name: 'Rebuild' })
+    const first = await commitOnBranch(fx, branch, { file: 'src/app.js', content: 'export const answer = 2\n', subject: 'First' })
+    const second = await commitOnBranch(fx, branch, { file: 'README.md', content: '# Task two\n', subject: 'Second', parent: first })
+
+    const result = await fx.service.apply('s1', { branchId: branch.id, commitIds: [second] })
+
+    assert.equal(result.applied.files, 1)
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'README.md'), 'utf8'), '# Task two\n')
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 1\n')
+  } finally {
+    await fx.cleanup()
+  }
+})
+
+test('apply() refuses uncommitted project changes unless the drift is confirmed', async () => {
+  const fx = await fixture()
+  try {
+    const { branch } = await fx.service.createBranch('s1', { name: 'Drift' })
+    await commitOnBranch(fx, branch, { file: 'src/app.js', content: 'export const answer = 2\n', subject: 'Branch' })
+    await fs.writeFile(path.join(fx.projectPath, 'README.md'), '# Local edit\n')
+
+    await assert.rejects(fx.service.apply('s1', { branchId: branch.id }), (error) => {
+      assert.equal(error.code, 'artel/project-drift')
+      assert.deepEqual(error.details.drift.files, ['README.md'])
+      return true
+    })
+
+    const result = await fx.service.apply('s1', { branchId: branch.id, confirmDrift: true })
+    assert.match(result.applied.driftCommit, /^[0-9a-f]{40}$/)
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'README.md'), 'utf8'), '# Local edit\n')
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 2\n')
+  } finally {
+    await fx.cleanup()
+  }
+})
+
+test('apply() refuses a failing check unless the user forces it', async () => {
+  const fx = await fixture()
+  try {
+    const { branch } = await fx.service.createBranch('s1', { name: 'Check' })
+    await commitOnBranch(fx, branch, { file: 'src/app.js', content: 'export const answer = 2\n', subject: 'Branch' })
+    // Deviation from the plan: `node -e "process.exit(1)"` is mangled by Node's
+    // Windows argument quoting when spawned as cmd.exe /d /s /c <command> (the
+    // planned runCheckCommand shape), so cmd exits 0. Without inner quotes the
+    // same command exits non-zero through that shape on Windows and Unix alike.
+    const checkCommand = 'node -e process.exit(1)'
+
+    await assert.rejects(fx.service.apply('s1', { branchId: branch.id, checkCommand }), (error) => {
+      assert.equal(error.code, 'artel/check-failed')
+      assert.equal(error.details.check.ok, false)
+      return true
+    })
+
+    const forced = await fx.service.apply('s1', { branchId: branch.id, checkCommand, force: true })
+    assert.equal(forced.check.ok, false)
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 2\n')
+  } finally {
+    await fx.cleanup()
+  }
+})
+
+test('apply() reports a conflict when the fixer cannot converge', async () => {
+  const fx = await fixture()
+  try {
+    const { branch } = await fx.service.createBranch('s1', { name: 'Conflict' })
+    await commitOnBranch(fx, branch, { file: 'src/app.js', content: 'export const answer = 2\n', subject: 'Branch answer' })
+    await commitToApplied(fx, { file: 'src/app.js', content: 'export const answer = 3\n', subject: 'Project answer' })
+
+    await assert.rejects(fx.service.apply('s1', { branchId: branch.id }), (error) => {
+      assert.equal(error.code, 'artel/apply-conflict')
+      assert.deepEqual(error.details.conflicts, ['src/app.js'])
+      return true
+    })
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 3\n')
+  } finally {
+    await fx.cleanup()
+  }
+})
+
+test('apply() lets the fixer converge a merge conflict', async () => {
+  const fx = await fixture({
+    assist: async ({ copyPath, prompt }) => {
+      assert.match(prompt, /conflict/i)
+      await fs.writeFile(path.join(copyPath, 'src', 'app.js'), 'export const answer = 4\n')
+    },
+  })
+  try {
+    const { branch } = await fx.service.createBranch('s1', { name: 'Fixer' })
+    await commitOnBranch(fx, branch, { file: 'src/app.js', content: 'export const answer = 2\n', subject: 'Branch answer' })
+    await commitToApplied(fx, { file: 'src/app.js', content: 'export const answer = 3\n', subject: 'Project answer' })
+
+    const result = await fx.service.apply('s1', { branchId: branch.id })
+
+    assert.match(result.applied.commit, /^[0-9a-f]{40}$/)
+    assert.equal(fx.engine.calls.assists.length, 1)
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 4\n')
   } finally {
     await fx.cleanup()
   }

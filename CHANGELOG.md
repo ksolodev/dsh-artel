@@ -4,6 +4,27 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] — 2026-11-21
+
+### Fixed
+
+- **The auto-queue results card can no longer slide under the composer (issue #7).** Parts, changes and the
+  queue strip were direct flex children of the run column: under vertical pressure they shrank to zero
+  height while still painting their content outside themselves, so the green «Итоги автоочереди» card
+  ended up under the composer and past the panel bottom, and the only scroll region wrapped the feed, so
+  nothing could scroll it into view. The below-feed stack now lives inside the run column's scroll region
+  (`.dsh-artel-run__below`), the queue strip refuses to shrink (`flex: none`), the agent route and live
+  strips stay fixed above it, and the composer stays pinned below — so a short panel scrolls through the
+  parts, changes and results instead of hiding them.
+- **The results card collapses into its title row.** «Итоги автоочереди» is now a toggle with the entry
+  count; collapsing hides the rows and keeps the card at a 46px title, so a finished night shift does not
+  take half of a short panel.
+- **When a shift finishes the results card scrolls itself into view,** and the feed keeps auto-following
+  new messages only while its tail is actually on screen, so the two no longer fight over the bottom.
+- **The launch screen scrolls instead of clipping.** The hero was a centred flex column with no overflow:
+  a tall queue strip pushed the title above the panel top and the queue below the panel bottom. It now
+  scrolls, while auto margins keep the short layout centred.
+
 ## [0.9.0] — 2026-11-21
 
 ### Added

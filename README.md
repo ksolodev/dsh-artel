@@ -192,7 +192,8 @@ login ends it.
 current task pass its check and then stops, and switching **Auto-queue** off stops taking new tasks. The
 queue also ends by itself when it is empty, when the task limit is reached, after three parks in a row,
 when the login is lost, or when the disk is nearly full. The **Auto-queue results** card then lists the
-saved versions, the parked tasks and the reason the queue stopped.
+saved versions, the parked tasks and the reason the queue stopped. It collapses to its title, and the run
+column scrolls, so on a short panel the card stays reachable instead of hiding under the composer.
 
 ## Factory — the ticket pipeline
 

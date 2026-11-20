@@ -285,7 +285,9 @@ resumes after the reset; a lost login ends it.
 current task pass its check and then stops, and switching **Auto-queue** off stops taking new tasks. The
 queue ends by itself when it is empty, when the task limit is reached, after three parks in a row, when the
 login is lost, or when the disk is nearly full. The **Auto-queue results** card then shows the versions it
-saved with their checks, the parked tasks with their reasons and the tasks that were not taken.
+saved with their checks, the parked tasks with their reasons and the tasks that were not taken. The card
+collapses to its **Auto-queue results** title, and when a shift finishes it scrolls itself into view: the
+run column scrolls, so a short panel never ends up hiding the card under the composer.
 
 ## Factory
 

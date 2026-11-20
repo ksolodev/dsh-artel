@@ -73,6 +73,10 @@ previous runs of this session.
   agent too.
 - **Changes**: file list with +N/−M, lazy per-file unified diff, colored with theme tokens. Refresh.
   Empty state "no changes yet" (also the swarm phase-1 state).
+- **Layout**: the run column is one scroll region — feed, parts card, changes card and the queue strip
+  scroll together under the fixed route/live strips, while the composer stays pinned below. The
+  «Итоги автоочереди» card collapses to its title row and scrolls itself into view when a shift finishes,
+  so no block can be painted under the composer or past the panel edge (issue #7).
 - **Actions**: `Apply changes` (primary, confirmation, all or selected files), `Discard run`
   (destructive, confirm). Apply only enabled when there are changes and the run is not running.
 - **Agents** (all modes): rows with name, role, claimed files, state and the two route pickers; collisions flagged.

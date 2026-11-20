@@ -2643,7 +2643,7 @@ test('all three dictionaries carry the auto-queue and factory strings', () => {
     assert.deepEqual(Object.keys(dictionaries[locale]).sort(), english, locale + ' has every English key')
   }
   const queueAndFactory = english.filter((key) => key.startsWith('queue.') || key.startsWith('factory.'))
-  assert.equal(queueAndFactory.length, 187, 'every queue and factory string is present')
+  assert.equal(queueAndFactory.length, 190, 'every queue and factory string is present')
   const expected = {
     en: {
       'queue.title': 'Waiting',
@@ -2692,14 +2692,12 @@ test('queue and factory view-model helpers are exposed on the debug bridge', () 
   const ruT = (key) => (debug.dictionaries.ru[key] !== undefined ? debug.dictionaries.ru[key] : key)
   const enT = (key) => (debug.dictionaries.en[key] !== undefined ? debug.dictionaries.en[key] : key)
 
-  assert.deepEqual(debug.queueHelpers.modes, ['solo', 'swarm', 'conductor', 'fusion'])
+  assert.deepEqual(debug.queueHelpers.modes, ['solo', 'swarm', 'conductor', 'orchestrator', 'fusion'])
   const modeOptions = debug.queueHelpers.modeOptions(ruT)
-  assert.deepEqual(modeOptions.map((option) => option.value), ['solo', 'swarm', 'conductor', 'fusion', 'orchestrator'])
+  assert.deepEqual(modeOptions.map((option) => option.value), ['solo', 'swarm', 'conductor', 'orchestrator', 'fusion'])
   assert.equal(modeOptions.length, 5)
-  assert.equal(modeOptions[4].label, 'Оркестратор')
-  assert.equal(modeOptions[4].disabled, true, 'the Orchestrator is shown disabled in the queue picker')
-  assert.equal(modeOptions[4].hint, 'Недоступен: пока не умеет стартовать с сохранённой версии.')
-  assert.ok(modeOptions.slice(0, 4).every((option) => option.disabled !== true && option.hint === undefined))
+  assert.equal(modeOptions[3].label, 'Оркестратор')
+  assert.ok(modeOptions.every((option) => option.disabled !== true && option.hint === undefined), 'every queue mode is selectable')
   assert.equal(debug.queueHelpers.statusLabel(ruT, 'queued'), 'В очереди')
   assert.equal(debug.queueHelpers.statusLabel(ruT, 'passed'), 'Версия сохранена')
   assert.equal(debug.queueHelpers.statusLabel(ruT, 'bogus'), 'bogus')
@@ -2816,7 +2814,7 @@ test('the new-session screen queues a task and flips «Автоочередь»'
   state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
 })
 
-test('the queue mode picker shows the Orchestrator disabled and cannot choose it', async () => {
+test('the queue picker offers the Orchestrator and queues it', async () => {
   const current = { queue: queueFixture() }
   const state = setup({
     scenario: {
@@ -2835,56 +2833,72 @@ test('the queue mode picker shows the Orchestrator disabled and cannot choose it
     },
   })
   let opened = await openArtel(state)
-  const strip = findByClass(opened, 'dsh-artel-queue')
-  assert.ok(strip !== undefined, 'the hero shows the «Ожидают» strip')
-  assert.ok(findByClass(strip, 'dsh-artel-queue__add') !== undefined, 'the add-task row is rendered')
+  assert.ok(findByClass(opened, 'dsh-artel-queue') !== undefined, 'the hero shows the «Ожидают» strip')
   const selectTrigger = () => findAll(findByClass(opened, 'dsh-artel-queue__add'), (node) => node.type === 'button'
     && String(node.props.className).split(/\s+/).includes('dsh-artel-select'))[0]
-  const trigger = selectTrigger()
-  assert.ok(trigger !== undefined, 'the queue mode picker is rendered')
-  trigger.props.onClick()
+  selectTrigger().props.onClick()
   opened = await state.realm.renderer.flush()
   const menu = findByClass(opened, 'dsh-artel-menu')
   assert.ok(menu !== undefined, 'the mode picker opens')
   const options = findAll(menu, (node) => node.props?.role === 'option')
-  assert.deepEqual(options.map((node) => node.props['data-value']), ['solo', 'swarm', 'conductor', 'fusion', 'orchestrator'])
-  const orchestrator = options.find((node) => node.props['data-value'] === 'orchestrator')
-  assert.equal(orchestrator.props['aria-disabled'], 'true')
-  assert.equal(orchestrator.props['data-disabled'], 'true')
-  assert.match(textOf(orchestrator), /Недоступен: пока не умеет стартовать с сохранённой версии/)
+  assert.deepEqual(options.map((node) => node.props['data-value']), ['solo', 'swarm', 'conductor', 'orchestrator', 'fusion'])
+  assert.ok(options.every((node) => node.props['aria-disabled'] !== 'true' && node.props['data-disabled'] !== 'true'), 'all five modes are selectable')
+  assert.match(textOf(menu), /Оркестратор/)
 
-  // A click on the disabled entry is ignored; the menu stays open to explain itself.
-  orchestrator.props.onClick()
+  pickOption(opened, 'orchestrator')
   opened = await state.realm.renderer.flush()
-  assert.equal(selectTrigger().props['data-value'], 'solo', 'the disabled entry cannot be chosen')
-  assert.ok(findByClass(opened, 'dsh-artel-menu') !== undefined, 'the menu stays open after the disabled click')
-
-  // The keyboard model skips the disabled entry: End lands on the last runnable mode,
-  // and ArrowDown there does not reach the Orchestrator either.
-  selectTrigger().props.onKeyDown({ key: 'End', preventDefault() {} })
-  opened = await state.realm.renderer.flush()
-  const active = () => findAll(findByClass(opened, 'dsh-artel-menu'), (node) => node.props?.role === 'option' && node.props['data-active'] === 'true')
-  assert.equal(active().length, 1)
-  assert.equal(active()[0].props['data-value'], 'fusion')
-  selectTrigger().props.onKeyDown({ key: 'ArrowDown', preventDefault() {} })
-  opened = await state.realm.renderer.flush()
-  assert.equal(active()[0].props['data-value'], 'fusion')
-
-  // A runnable mode still closes the menu and reaches the add-task call.
-  pickOption(opened, 'swarm')
-  opened = await state.realm.renderer.flush()
-  assert.equal(selectTrigger().props['data-value'], 'swarm')
+  assert.equal(selectTrigger().props['data-value'], 'orchestrator')
   assert.equal(findByClass(opened, 'dsh-artel-menu'), undefined)
+
   const input = findAll(opened, (node) => node.type === 'input' && String(node.props.className).includes('dsh-artel-queue__input'))[0]
-  input.props.onChange({ target: { value: 'Проверь очередь' } })
+  input.props.onChange({ target: { value: 'Собери релиз' } })
   opened = await state.realm.renderer.flush()
   findButton(findByClass(opened, 'dsh-artel-queue'), 'В очередь').props.onClick()
   await state.realm.settle()
   await state.realm.settle()
   const posted = state.realm.calls.find((call) => call.pathname === '/api/dsh-artel/queue' && call.method === 'POST')
   assert.ok(posted !== undefined, 'adding a task reached the Host')
-  assert.equal(posted.body.mode, 'swarm')
+  assert.equal(posted.body.mode, 'orchestrator')
   state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('branch actions load branch state and keep error details for the panel', async () => {
+  const branches = {
+    queue: { sessionId: 'sess-1' },
+    project: { head: 'a'.repeat(40), repoDir: 'C:\\state\\repos\\key.git', drift: { dirty: false, files: [] } },
+    currentBranchId: 'b-1',
+    branches: [{ id: 'b-1', name: 'Night', ref: 'refs/heads/artel/b-1', baseCommit: 'a'.repeat(40), tipCommit: null }],
+  }
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [],
+      route: ({ method, pathname }) => {
+        if (pathname === '/api/dsh-artel/queue' && method === 'GET') return reply(queueFixture())
+        if (pathname === '/api/dsh-artel/queue/branches' && method === 'GET') return reply(branches)
+        if (pathname === '/api/dsh-artel/queue/branches/b-1/apply' && method === 'POST') {
+          return reply({ error: 'The project has uncommitted changes.', code: 'artel/project-drift', details: { drift: { dirty: true, files: ['src/app.js'] } } }, 409)
+        }
+        if (pathname === '/api/dsh-artel/factory' && method === 'GET') return reply({ boards: [] })
+        return undefined
+      },
+    },
+  })
+  const opened = await openArtel(state)
+  const store = state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1')
+  assert.equal(store.getSnapshot().queueBranches, null)
+  assert.equal(store.getSnapshot().queueBranchError, null)
+
+  const loaded = await store.loadQueueBranches()
+  assert.equal(loaded.currentBranchId, 'b-1')
+  assert.equal(store.getSnapshot().queueBranches.currentBranchId, 'b-1', 'branch state lands in the snapshot')
+
+  const applied = await store.applyBranch('b-1', {})
+  assert.equal(applied, null)
+  assert.equal(store.getSnapshot().queueBranchError.code, 'artel/project-drift')
+  assert.deepEqual(store.getSnapshot().queueBranchError.details.drift.files, ['src/app.js'])
+  assert.match(store.getSnapshot().queueBranchError.text, /uncommitted changes/)
+  store.dispose()
 })
 
 test('history marks auto-queue versions and the run header too', async () => {

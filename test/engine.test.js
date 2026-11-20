@@ -2486,3 +2486,179 @@ test('refreshInstall discovers install needs on the project', async () => {
     await f.cleanup()
   }
 })
+
+/* ------------------------------ seeded orchestrators and the fixer */
+
+test('a seeded Orchestrator reads and copies the seed, not the real project', async () => {
+  const f = await fixture('orchestrator-seed')
+  try {
+    const seed = path.join(f.root, 'seed')
+    await fs.cp(f.projectPath, seed, { recursive: true })
+    await fs.writeFile(path.join(seed, 'README.md'), '# Seed\n')
+
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'orchestrator', task: 'Ship the seed', basePath: seed, isolateFromBase: true })
+    assert.equal(run.mode, 'orchestrator')
+    assert.equal(run.basePath, path.resolve(seed))
+    assert.equal(f.driver.created.length, 1)
+
+    const planner = f.driver.created[0]
+    assert.notEqual(path.resolve(planner.copyPath), path.resolve(f.projectPath), 'the planner reads a copy, never the real project')
+    assert.equal(await fs.readFile(path.join(planner.copyPath, 'README.md'), 'utf8'), '# Seed\n')
+    assert.ok(f.driver.prompts[0].text.includes(planner.copyPath), 'the planner is pointed at its read-only copy of the seed')
+    assert.equal(await fs.readFile(path.join(f.projectPath, 'README.md'), 'utf8'), '# Demo\n', 'the real project is untouched')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('a seeded Orchestrator takes every part copy and the assembly from the seed', async () => {
+  const f = await fixture('orchestrator-seed-parts')
+  try {
+    const seed = path.join(f.root, 'seed')
+    await fs.cp(f.projectPath, seed, { recursive: true })
+    await fs.writeFile(path.join(seed, 'README.md'), '# Seed\n')
+    await fs.writeFile(path.join(seed, 'src', 'app.js'), 'export const answer = 5\n')
+    const seedManifest = await hashTree(seed)
+
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'orchestrator', task: 'Ship the seed', basePath: seed, isolateFromBase: true })
+    await runTurn(f.driver, f.driver.created[0], ORCH_PLAN)
+
+    const p1 = path.join(f.copyRoot, `${run.id}-p1`)
+    const p2 = path.join(f.copyRoot, `${run.id}-p2`)
+    assert.equal(await fs.readFile(path.join(p1, 'src', 'app.js'), 'utf8'), 'export const answer = 5\n', 'the parts start from the seed')
+    assert.equal(await fs.readFile(path.join(p2, 'README.md'), 'utf8'), '# Seed\n')
+    const stored = f.store.get(run.id)
+    assert.equal(stored.baseHashes['src/app.js'].hash, seedManifest.files['src/app.js'].hash, 'the run diffs against the seed manifest')
+    assert.notEqual(stored.baseHashes['src/app.js'].hash, (await hashTree(f.projectPath)).files['src/app.js'].hash)
+
+    await fs.writeFile(path.join(p1, 'src', 'app.js'), 'export const answer = 2\n')
+    await runTurn(f.driver, f.driver.handleFor('Orion'), 'The answer is 2.')
+    await runTurn(f.driver, f.driver.handleFor('Lyra'), 'VERDICT: accept — done.')
+    await fs.writeFile(path.join(p2, 'README.md'), '# Seed\n\nThe answer is 2.\n')
+    await runTurn(f.driver, f.driver.handleFor('Atlas'), 'Documented the answer.')
+    await runTurn(f.driver, f.driver.handleFor('Nova'), 'VERDICT: accept — done.')
+
+    const latest = latestRun(f)
+    assert.equal(latest.status, 'waiting')
+    assert.equal(latest.merge.merged, true)
+    assert.equal(await fs.readFile(path.join(run.copyPath, 'src', 'app.js'), 'utf8'), 'export const answer = 2\n', 'the assembly starts from the seed')
+    assert.match(await fs.readFile(path.join(run.copyPath, 'README.md'), 'utf8'), /^# Seed\n\nThe answer is 2\./)
+    const changes = await f.engine.changes(run.id)
+    assert.deepEqual(changes.map((change) => change.path), ['README.md', 'src/app.js'])
+    const diff = await f.engine.fileDiff(run.id, 'README.md')
+    const diffLines = diff.hunks.flatMap((hunk) => hunk.lines)
+    assert.ok(diffLines.some((line) => line.type === ' ' && line.text === '# Seed'), 'the review reads the seed as the before side')
+    assert.ok(diffLines.some((line) => line.type === '+' && line.text === 'The answer is 2.'))
+    assert.ok(!diffLines.some((line) => line.text === '# Demo'), 'the real project is not the before side')
+    assert.equal(await fs.readFile(path.join(f.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 1\n', 'the real project never changed')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('assist runs one short-lived agent and returns its report', async () => {
+  const f = await fixture('assist')
+  try {
+    const copyPath = path.join(f.root, 'fixer-copy')
+    await fs.cp(f.projectPath, copyPath, { recursive: true })
+    const promise = f.engine.assist({ projectPath: f.projectPath, copyPath, prompt: 'Resolve the conflict in README.md' })
+    await new Promise(setImmediate)
+    const handle = f.driver.created[0]
+    assert.equal(handle.mode, 'solo')
+    assert.equal(handle.copyPath, copyPath)
+    assert.match(f.driver.prompts[0].text, /Resolve the conflict/)
+
+    await f.driver.emit(handle, { kind: 'turn-start' })
+    await f.driver.emit(handle, { kind: 'assistant', text: 'Merged both intents.' })
+    await f.driver.emit(handle, { kind: 'turn-end' })
+    const result = await promise
+    assert.equal(result.message, 'Merged both intents.')
+    assert.equal(typeof result.agentId, 'string')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('assist stops the fixer when the turn never ends', async () => {
+  const f = await fixture('assist-timeout')
+  try {
+    const copyPath = path.join(f.root, 'fixer-copy')
+    await fs.cp(f.projectPath, copyPath, { recursive: true })
+    const refused = (error) => error instanceof ArtelError && error.status === 504 && error.code === 'artel/assist-timeout'
+    await assert.rejects(
+      () => f.engine.assist({ projectPath: f.projectPath, copyPath, prompt: 'Resolve the conflict', timeoutMs: 20 }),
+      refused,
+      'a fixer that never finishes must not wait for ever',
+    )
+    assert.deepEqual(f.driver.interrupted, ['Fixer'], 'the fixer session is interrupted')
+    assert.equal(f.driver.created[0].listeners.size, 0, 'the engine stops listening to the fixer')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('repairArtifact only accepts an assembled Orchestrator run', async () => {
+  const f = await fixture('repair-guard')
+  try {
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Change the answer' })
+    await assert.rejects(
+      () => f.engine.repairArtifact(run.id, { prompt: 'fix it' }),
+      (error) => error instanceof ArtelError && error.status === 409 && error.code === 'artel/bad-mode',
+      'a solo run has no Orchestrator assembly to repair',
+    )
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('repairArtifact sends one fixer to the assembled copy and refreshes the changes', async () => {
+  const f = await fixture('repair-fixer')
+  try {
+    const run = await planOrchestrator(f)
+    const p1 = path.join(f.copyRoot, `${run.id}-p1`)
+    const p2 = path.join(f.copyRoot, `${run.id}-p2`)
+    await fs.writeFile(path.join(p1, 'src', 'app.js'), 'export const answer = 2\n')
+    await runTurn(f.driver, f.driver.handleFor('Orion'), 'Changed the answer to 2.')
+    await runTurn(f.driver, f.driver.handleFor('Lyra'), 'VERDICT: accept — done.')
+    await fs.writeFile(path.join(p2, 'README.md'), '# Demo\n\nThe answer is 2.\n')
+    await runTurn(f.driver, f.driver.handleFor('Atlas'), 'Documented the answer.')
+    await runTurn(f.driver, f.driver.handleFor('Nova'), 'VERDICT: accept — done.')
+    assert.equal(latestRun(f).status, 'waiting')
+    assert.equal(latestRun(f).changeCount, 2)
+
+    const fixing = f.engine.repairArtifact(run.id, { prompt: 'The check fails: the answer must be 3.', purpose: 'check' })
+    // The fixer is created and prompted through the same async path as a run
+    // agent, so wait until the prompt reached the driver.
+    for (let attempt = 0; attempt < 200 && !(f.driver.prompts.at(-1)?.text ?? '').includes('the answer must be 3'); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    const fixer = f.driver.created.at(-1)
+    const fixerRecord = latestRun(f).agents.at(-1)
+    assert.equal(fixerRecord.role, 'fixer')
+    assert.equal(fixer.name, fixerRecord.name)
+    assert.equal(fixer.copyPath, run.copyPath, 'the fixer edits the assembly the user is reviewing')
+    assert.match(f.driver.prompts.at(-1).text, /the answer must be 3/)
+    await assert.rejects(
+      () => f.engine.repairArtifact(run.id, { prompt: 'again' }),
+      (error) => error instanceof ArtelError && error.status === 409 && error.code === 'artel/fixer-busy',
+      'only one fixer may work on the assembly',
+    )
+
+    await fs.writeFile(path.join(run.copyPath, 'src', 'app.js'), 'export const answer = 3\n')
+    await runTurn(f.driver, fixer, 'Changed the answer to 3.')
+    const result = await fixing
+    assert.equal(result.agentId, fixerRecord.id)
+    assert.equal(result.changeCount, 2, 'the assembled copy still changes two files')
+    assert.equal(latestRun(f).changeCount, 2)
+    assert.ok((await feedOf(f, run.id)).some((event) => event.kind === 'status' && event.text === 'The fixer updated 2 file(s).'))
+    assert.equal(latestRun(f).status, 'waiting', 'the run stays reviewable after the repair')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})

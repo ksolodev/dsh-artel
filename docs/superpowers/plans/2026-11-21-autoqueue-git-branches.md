@@ -612,6 +612,8 @@ git commit -m "feat: model the app-owned git repository and its ref plumbing"
 - Consumes: Task 2.
 - Produces (methods on `ArtelGit`): `async importProject({ message = 'Import project' } = {})` → sha; `async commitDir(dir, { parent = null, message })` → sha; `async worktreeAdd(dir, commit)`; `async worktreeRemove(dir)`; `async pruneWorktrees()`; `async materialize(dir, commit)` → dir; `async tree(commit)` → `{ path, mode, type, sha }[]`; `async show(commit, relPath)` → string | null; `async blob(commit, relPath)` → Buffer | null; `async changes(from, to)` → `{ path, status, added, removed, binary }[]`; `async log(ref, { max = 50 } = {})` → `{ commit, parents, author, date, subject }[]`; `async revList({ from = null, to })` → string[] oldest→newest; `async status()` → `{ path, status }[]`.
 
+> **Already implemented (Task 2 deviation, commit `2ff3f6d`):** `importProject()` and `commitDir()` moved into Task 2 because its refs test needs them, and `init()` now also sets `core.worktree`. Do not re-add these two methods; check they already exist and match this task's tests, then implement only `worktreeAdd`, `worktreeRemove`, `pruneWorktrees`, `materialize`, `tree`, `show`, `blob`, `changes`, `log`, `revList`, `status`, and append the tests that are not already present.
+
 - [ ] **Step 1: Write the failing tests**
 
 ```js

@@ -3169,3 +3169,209 @@ test('the issue import row is labelled and explains a failed import', async () =
   assert.equal(findByClass(opened, 'dsh-artel-factory__importError'), undefined, 'editing the reference hides the old error')
   state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
 })
+
+/* ------------------------------------------------------- feed blocks (0.8.4) */
+
+/** The localStorage payload the run pane writes its fold/hide state into. */
+function storedBlocks(state) {
+  return JSON.parse(state.realm.localStorage.getItem('dsh-artel:blocks:sess-1') ?? '{}')
+}
+
+/** The fold button of a managed block (plan, tools, …). */
+function blockHead(block) {
+  return findAll(block, (node) => node.type === 'button' && node.props.className === 'dsh-artel-block__head')[0]
+}
+
+test('a plan block folds to one line and the fold survives a render and a reload', async () => {
+  const planText = Array.from({ length: 20 }, (_, index) => 'Строка плана ' + (index + 1)).join('\n')
+  const scenario = {
+    project: DEFAULT_PROJECT,
+    runs: [DEFAULT_RUN],
+    feed: { 'run-1': [{ seq: 1, at: '2026-01-01T10:01:00Z', kind: 'plan', text: planText }] },
+  }
+  const state = setup({ scenario })
+  let opened = await openArtel(state)
+  let plan = findByClass(opened, 'dsh-artel-plan')
+  assert.ok(plan !== undefined, 'the plan is a card of its own')
+  assert.equal(plan.props['data-collapsed'], 'false', 'the plan starts unfolded')
+  assert.match(textOf(plan), /20 строк/, 'the header counts the plan lines')
+  const head = blockHead(plan)
+  assert.ok(head !== undefined, 'the plan has a disclosure header')
+  assert.equal(head.props['aria-expanded'], true)
+  assert.match(textOf(head), /План/)
+
+  head.props.onClick()
+  opened = await state.realm.renderer.flush()
+  plan = findByClass(opened, 'dsh-artel-plan')
+  assert.equal(plan.props['data-collapsed'], 'true', 'the card folds to one line')
+  assert.equal(findByClass(plan, 'dsh-artel-plan__text'), undefined, 'the folded card keeps no text')
+  assert.match(textOf(plan), /20 строк/, 'the folded line still says how much is inside')
+  assert.equal(blockHead(plan).props['aria-expanded'], false)
+  assert.equal(storedBlocks(state).collapsed['plan:1'], true, 'the fold is persisted per session')
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+
+  // Reload: a fresh realm that reads the same localStorage sees the folded card.
+  const reloaded = setup({ scenario })
+  reloaded.realm.localStorage.setItem('dsh-artel:blocks:sess-1', state.realm.localStorage.getItem('dsh-artel:blocks:sess-1'))
+  const again = await openArtel(reloaded)
+  assert.equal(findByClass(again, 'dsh-artel-plan').props['data-collapsed'], 'true', 'the folded plan survives a reload')
+  reloaded.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('a long agent message shows the whole text when asked', async () => {
+  const messageText = Array.from({ length: 16 }, (_, index) => 'Строка ответа ' + (index + 1)).join('\n')
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [DEFAULT_RUN],
+      feed: { 'run-1': [{ seq: 1, at: '2026-01-01T10:02:00Z', kind: 'assistant', agent: 'Nova', text: messageText }] },
+    },
+  })
+  let opened = await openArtel(state)
+  const message = findByClass(opened, 'dsh-artel-msg')
+  assert.equal(message.props['data-collapsed'], 'false')
+  let clamp = findByClass(message, 'dsh-artel-clamp')
+  assert.ok(clamp !== undefined, 'a long message is clamped to a readable height')
+  assert.equal(clamp.props['data-tall'], 'false')
+  const more = findByClass(clamp, 'dsh-artel-clamp__more')
+  assert.ok(more !== undefined, 'a «показать целиком» control is offered')
+  assert.equal(textOf(more).trim(), 'Показать целиком')
+
+  more.props.onClick()
+  opened = await state.realm.renderer.flush()
+  clamp = findByClass(findByClass(opened, 'dsh-artel-msg'), 'dsh-artel-clamp')
+  assert.equal(clamp.props['data-tall'], 'true', 'the clamp opens up to the whole text')
+  assert.equal(textOf(findByClass(clamp, 'dsh-artel-clamp__more')).trim(), 'Свернуть')
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('the block toolbar hides a kind of block and remembers the choice', async () => {
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [DEFAULT_RUN],
+      feed: {
+        'run-1': [
+          { seq: 1, at: '2026-01-01T10:01:00Z', kind: 'plan', text: 'Короткий план' },
+          { seq: 2, at: '2026-01-01T10:02:00Z', kind: 'assistant', agent: 'Nova', text: 'Ответ агента.' },
+        ],
+      },
+    },
+  })
+  let opened = await openArtel(state)
+  let manage = findByClass(opened, 'dsh-artel-manage')
+  assert.ok(manage !== undefined, 'the run pane carries the blocks toolbar')
+  assert.equal(manage.props.role, 'toolbar')
+  const chips = findAll(manage, (node) => node.type === 'button'
+    && String(node.props.className ?? '').split(/\s+/).includes('dsh-artel-manage__chip'))
+  assert.equal(chips.length, 7, 'six block kinds plus the compact switch')
+  assert.ok(findButton(manage, 'План') !== undefined)
+  assert.ok(findButton(manage, 'Компактно') !== undefined)
+  const planChip = findButton(manage, 'План')
+  assert.equal(planChip.props['aria-pressed'], true)
+
+  planChip.props.onClick()
+  opened = await state.realm.renderer.flush()
+  assert.equal(findByClass(opened, 'dsh-artel-plan'), undefined, 'a hidden kind is not rendered at all')
+  const stillThere = findByClass(opened, 'dsh-artel-msg')
+  assert.ok(stillThere !== undefined, 'the other kinds stay in the feed')
+  assert.equal(storedBlocks(state).hidden.plan, true, 'the choice is remembered per session')
+
+  manage = findByClass(opened, 'dsh-artel-manage')
+  const hiddenChip = findButton(manage, 'План')
+  assert.equal(hiddenChip.props['aria-pressed'], false, 'the chip reports the hidden state')
+  assert.equal(hiddenChip.props['data-active'], 'false')
+  hiddenChip.props.onClick()
+  opened = await state.realm.renderer.flush()
+  assert.ok(findByClass(opened, 'dsh-artel-plan') !== undefined, 'the block comes back')
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('compact mode folds every block and «развернуть все» unfolds them', async () => {
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [DEFAULT_RUN],
+      feed: {
+        'run-1': [
+          { seq: 1, at: '2026-01-01T10:01:00Z', kind: 'plan', text: 'План' },
+          { seq: 2, at: '2026-01-01T10:02:00Z', kind: 'assistant', agent: 'Nova', text: 'Ответ.' },
+          { seq: 3, at: '2026-01-01T10:03:00Z', kind: 'tool', agent: 'Nova', tool: 'write', text: 'write src/app.js', callId: 'call-1' },
+          { seq: 4, at: '2026-01-01T10:03:01Z', kind: 'tool-result', agent: 'Nova', callId: 'call-1', ok: true, text: 'ok' },
+        ],
+      },
+    },
+  })
+  let opened = await openArtel(state)
+  const compact = findButton(findByClass(opened, 'dsh-artel-manage'), 'Компактно')
+  assert.ok(compact !== undefined)
+  compact.props.onClick()
+  opened = await state.realm.renderer.flush()
+  for (const className of ['dsh-artel-plan', 'dsh-artel-msg', 'dsh-artel-tools']) {
+    const block = findByClass(opened, className)
+    assert.ok(block !== undefined, className + ' is in the feed')
+    assert.equal(block.props['data-collapsed'], 'true', className + ' folds in compact mode')
+  }
+  assert.equal(findByClass(opened, 'dsh-artel-plan__text'), undefined)
+  assert.equal(storedBlocks(state).compact, true)
+
+  const unfold = findButton(findByClass(opened, 'dsh-artel-manage'), 'Развернуть все')
+  assert.ok(unfold !== undefined, 'the toolbar can undo the whole mode')
+  unfold.props.onClick()
+  opened = await state.realm.renderer.flush()
+  for (const className of ['dsh-artel-plan', 'dsh-artel-msg', 'dsh-artel-tools']) {
+    assert.equal(findByClass(opened, className).props['data-collapsed'], 'false', className + ' unfolds again')
+  }
+  assert.ok(findByClass(opened, 'dsh-artel-plan__text') !== undefined)
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('the composer is pinned outside the scrolled feed and the split resizes it', async () => {
+  const state = setup({ scenario: { project: DEFAULT_PROJECT, runs: [ORCHESTRATOR_RUN], changes: REVIEW_CHANGES } })
+  let opened = await openArtel(state)
+  const scroll = findByClass(opened, 'dsh-artel-run__scroll')
+  assert.ok(scroll !== undefined)
+  assert.ok(findByClass(scroll, 'dsh-artel-parts') !== undefined, 'the parts card scrolls with the feed')
+  assert.equal(findByClass(scroll, 'dsh-artel-composer'), undefined, 'the composer never scrolls with the feed')
+
+  const split = findByClass(opened, 'dsh-artel-run__split')
+  assert.ok(split !== undefined, 'a split handle separates the feed from the composer')
+  assert.equal(split.props.role, 'separator')
+  assert.equal(split.props['aria-orientation'], 'horizontal')
+  const textarea = findAll(findByClass(opened, 'dsh-artel-composer'), (node) => node.type === 'textarea')[0]
+  assert.equal(textarea.props.style.maxHeight, 132, 'the composer starts at its compact height')
+
+  split.props.onPointerDown({ button: 0, clientY: 100, preventDefault() {} })
+  state.realm.dispatchWindowEvent('pointermove', { clientY: 180 })
+  opened = await state.realm.renderer.flush()
+  state.realm.dispatchWindowEvent('pointerup', {})
+  const grown = findAll(findByClass(opened, 'dsh-artel-composer'), (node) => node.type === 'textarea')[0]
+  assert.equal(grown.props.style.maxHeight, 212, 'dragging the split grows the composer')
+  assert.equal(storedBlocks(state).heights.composer, 212, 'the dragged height is remembered')
+
+  const parts = findByClass(opened, 'dsh-artel-parts')
+  const partsToggle = findAll(parts, (node) => node.type === 'button' && node.props.className === 'dsh-artel-block__icon')[0]
+  assert.ok(partsToggle !== undefined, 'the parts card folds from its own header')
+  partsToggle.props.onClick()
+  opened = await state.realm.renderer.flush()
+  const folded = findByClass(opened, 'dsh-artel-parts')
+  assert.equal(folded.props['data-collapsed'], 'true')
+  assert.equal(findByClass(folded, 'dsh-artel-parts__body'), undefined, 'a folded parts card keeps only its header')
+  assert.equal(storedBlocks(state).collapsed.parts, true)
+
+  const changes = findByClass(opened, 'dsh-artel-changes')
+  assert.ok(changes !== undefined, 'the changes card is in the same column')
+  assert.equal(changes.props['data-block'], 'changes')
+  const changesToggle = findAll(
+    changes,
+    (node) => node.type === 'button' && node.props.className === 'dsh-artel-changes__iconbtn',
+  )[1]
+  assert.ok(changesToggle !== undefined, 'the changes card folds from its own header')
+  changesToggle.props.onClick()
+  opened = await state.realm.renderer.flush()
+  const foldedChanges = findByClass(opened, 'dsh-artel-changes')
+  assert.equal(foldedChanges.props['data-collapsed'], 'true')
+  assert.equal(findByClass(foldedChanges, 'dsh-artel-changes__body'), undefined)
+  assert.equal(storedBlocks(state).collapsed.changes, true)
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})

@@ -817,6 +817,13 @@ test('plugin registers one conversation.input.left entry and diagnostics', async
   assert.equal(state.realm.styleElements[0].attributes['data-plugin'], 'dsh-artel')
   assert.match(state.realm.styleElements[0].textContent, /\.dsh-artel-surface/)
   assert.match(state.realm.styleElements[0].textContent, /\.dsh-artel-launcher/)
+  const launcherCss = state.realm.styleElements[0].textContent
+  assert.match(launcherCss, /\.dsh-artel-launcher:focus-visible/, 'the launcher keeps a visible focus ring')
+  assert.match(launcherCss, /\.dsh-artel-launcher \{[^}]*border: 1px solid rgba\(124, 108, 255, 0\.32\)/, 'the launcher paints the Artel chip instead of a bare glyph')
+  assert.match(launcherCss, /\.dsh-artel-launcher \{[^}]*linear-gradient\(180deg, rgba\(124, 108, 255, 0\.24\)/, 'the chip carries the brand fill')
+  assert.match(launcherCss, /\.dsh-artel-launcher__label/, 'the chip names itself next to the mark')
+  assert.match(launcherCss, /@container \(max-width: 460px\)/, 'a narrow row keeps only the mark')
+  assert.doesNotMatch(launcherCss, /\.dsh-artel-launcher[^{]*\.dsh-artel-spin/, 'no spinner ring is ever attached to the launcher')
   assert.doesNotMatch(state.realm.styleElements[0].textContent, /dsh-artel-model-pick::after/, 'the chip paints no second chevron')
   assert.match(state.realm.styleElements[0].textContent, /dsh-artel-hero__textarea:focus-visible/, 'the card owns the only focus ring')
   assert.match(state.realm.styleElements[0].textContent, /dsh-artel-btn--primary\[disabled\]:hover/, 'a disabled primary keeps its gradient on hover')
@@ -1037,6 +1044,9 @@ test('launcher opens the overlay, hero shows the project and starts a run', asyn
   const tree = await renderLauncher(state, { sessionCwd: 'C:\\cwd\\other' })
   const launcher = findByClass(tree, 'dsh-artel-launcher')
   assert.ok(launcher !== undefined, 'launcher button rendered')
+  assert.equal(findByClass(launcher, 'dsh-artel-spin'), undefined, 'the composer row shows no Artel spinner next to the mark')
+  assert.equal(findByClass(launcher, 'dsh-artel-dot'), undefined, 'an idle launcher paints no status badge')
+  assert.match(textOf(findByClass(launcher, 'dsh-artel-launcher__label')), /Артель/, 'the chip names itself so it cannot read as a second spinner')
   assert.equal(state.realm.renderer.tree().kind, 'host')
 
   launcher.props.onClick()
@@ -1633,8 +1643,8 @@ test('all three dictionaries carry the Conductor and Fusion mode and role labels
       assert.equal(dictionaries[locale]?.[key], expected[locale][key], locale + ' has ' + key)
     }
   }
-  assert.equal(state.report.version, '0.8.1', 'the diagnostics report carries the release version')
-  assert.equal(state.realm.window.__DSH_ARTEL_DEBUG__.version, '0.8.1')
+  assert.equal(state.report.version, '0.8.2', 'the diagnostics report carries the release version')
+  assert.equal(state.realm.window.__DSH_ARTEL_DEBUG__.version, '0.8.2')
 })
 
 test('modeLabel, agentProgress and agentRole know the conductor', () => {

@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.2] — 2026-11-21
+
+### Fixed
+
+- **The composer row no longer reads as two loading indicators.** The launcher was a bare 15px 8-ray
+  mark — the exact shape of a spinner — so when the host painted its own loading ring (`StateDot`) in the
+  same composer row, the pair looked like a duplicated, broken indicator (issue #2). The launcher is now a
+  labelled brand chip: the violet Artel surface, the mark and the name «Артель», collapsing to the mark
+  alone in a row narrower than 460px. The busy state moved from the old bottom-corner dot to a 7px corner
+  badge, and no `.dsh-artel-spin` is ever attached to the launcher, so Artel paints no loader in that row
+  and the host's ring stays the only one there.
+
 ## [0.8.1] — 2026-11-20
 
 ### Fixed

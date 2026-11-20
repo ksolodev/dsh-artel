@@ -9,10 +9,11 @@
 Run a development task in an isolated copy of your project, watch the work as it happens, review the
 diff line by line, then apply it yourself.
 
-Artel is a DeepSeek Harness plugin. It adds an **Artel** icon button to the chat composer tool row, next
-to **+**. The button covers the current chat with a panel: the session rail of Artel runs on the left,
-and either the new-run form or the live run on the right. The chat session's working directory is the
-project; Artel never touches it until you apply.
+Artel is a DeepSeek Harness plugin. It adds a labelled **Artel** chip — the brand mark and the name on
+the violet brand surface — to the chat composer tool row, next to **+**; a row narrower than 460px keeps
+only the mark. Clicking it covers the current chat with a panel: the session rail of Artel runs on the
+left, and either the new-run form or the live run on the right. The chat session's working directory is
+the project; Artel never touches it until you apply.
 
 ![Artel opens over the chat](docs/artel-in-chat/screens/hero.png)
 
@@ -44,7 +45,8 @@ host reload. In the desktop app you can also use **Settings → Plugins → Inst
 the `.tgz` or the checkout folder.
 
 After installing, restart DeepSeek Harness (or reload the page, which recomposes the client boot
-graph), open a chat session that has a project directory, and click **Artel** in the composer tool row.
+graph), open a chat session that has a project directory, and click the **Artel** chip in the composer
+tool row.
 The plugin's host half talks to the client over a loopback-only HTTP API, so the plugin and the host
 must run on the same machine.
 

@@ -25,8 +25,12 @@ The real project is never written by an agent: agents run with cwd = copy. Apply
 
 Artel lives inside the chat, not in the right sidebar:
 
-- **Launcher**: a button in the standard composer tool row (`conversation.input.left`, entry id
-  `artel-launcher`, registered by the client bundle). Click opens the artel surface.
+- **Launcher**: a chip in the standard composer tool row (`conversation.input.left`, entry id
+  `artel-launcher`, registered by the client bundle): the violet brand surface, the 15px artel mark and
+  the label «Артель» (a row narrower than 460px keeps only the mark). Click opens the artel surface. The
+  chip is deliberately a labelled brand control, never a bare glyph and never a spinner — the row already
+  carries the host's own loading indicators (the host `StateDot` ring), and an icon-only 8-ray mark beside
+  one read as a second loader (issue #2). The busy state is a 7px corner badge, not a ring.
 - **Surface**: a full-bleed overlay over the conversation region, portalled to `document.body` and
   positioned from `[data-conversation-content]`. It is rendered by the same `conversation.input.left`
   entry as the launcher (the composer dock slots do not exist in the hero/blank phase, so the

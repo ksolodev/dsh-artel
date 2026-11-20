@@ -3,17 +3,18 @@
 Artel runs a development task in an isolated copy of the project that the current chat session works
 in: it shows the work as it happens and moves the result into your project only when you ask.
 
-Artel opens from the chat itself. The **Artel** icon button sits in the composer tool row, next to
-"+". It lays a panel (overlay) over the current chat; the chat stays underneath and is not changed.
-The panel belongs to this session, and the session's working directory is the project.
+Artel opens from the chat itself. The **Артель** chip — the Artel mark and the name on the violet brand
+surface — sits in the composer tool row, next to "+"; a narrow row keeps only the mark. It lays a panel
+(overlay) over the current chat; the chat stays underneath and is not changed. The panel belongs to this
+session, and the session's working directory is the project.
 
 ![The Artel panel: the session rail and the new-run form](artel-in-chat/screens/hero.png)
 
 ## Open Artel
 
 1. Open a chat whose working directory contains the project.
-2. Click **Artel** in the tool row under the chat composer (next to **+**). While a run in this
-   session is active, the button shows a dot.
+2. Click the **Артель** chip in the tool row under the chat composer (next to **+**). While a run in this
+   session is active, the chip shows an amber dot in its corner.
 3. The panel covers the chat area. To get back to the chat, use **Chat** in the panel header or
    press Esc. Closing the panel does not stop the run: the agents keep working, and the next time
    you open the panel it returns to the last selected run.

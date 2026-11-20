@@ -2049,7 +2049,7 @@ export class BranchService {
       if (opened !== null) return opened
     }
 
-    const git = await ArtelGit.ensure({ stateDir: this.#stateDir, projectPath: queue.projectPath, exclude: this.#exclude })
+    const { git } = await ArtelGit.ensure({ stateDir: this.#stateDir, projectPath: queue.projectPath, exclude: this.#exclude })
     let head = await git.head()
     if (head === null) head = await git.importProject({ message: 'Import project' })
     const project = {

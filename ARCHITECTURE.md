@@ -16,7 +16,7 @@ A DSH bundle plugin (`dsh-artel`) that turns "develop this in my project" into a
 - **Swarm** — 3 agents, ONE shared copy and ONE agent tree (the first agent is the tree root, the other two are its continuable subagents), so they can really message each other with the standard team tools. First turn is planning/ownership only (no edits), then parallel work in disjoint file areas. One combined diff, one Apply.
 - **Conductor** — 1 conductor + `swarmAgentCount` workers (three by default), ONE shared copy and ONE agent tree like Swarm: the conductor is the root Session, the workers are its subagents. The first turn is planning only — the workers propose the shares and the conductor approves or reassigns them, its word is final. While the workers edit in parallel, a worker's question reaches the conductor and is answered without the user, and a failed worker's share is moved to a live worker. When every worker is idle the conductor reviews the whole copy (changed files + the project's checks) against the task and answers `VERDICT: accept` or `VERDICT: rework` with remarks, at most two rework rounds; accepted work still waits for the user's Apply.
 - **Orchestrator** — a planner reads the real project (read-only) and splits the goal into parts with done conditions; each part is worked and reviewed in its own copy, and the accepted parts are assembled into one copy by the host (a merger resolves only real conflicts). One combined diff, one Apply, still only by the user.
-- **Auto-queue** (v0.8) — a per-chat-session queue of tasks that runs unattended when the «Автоочередь» toggle is on. Every task is an ordinary run; a finished task passes the check command, becomes its own version, and the next task is seeded from the last successful version (`basePath`) while the diff base stays the real project. Night-shift rules, a check gate, parking and a results card; the Orchestrator is not a queue mode.
+- **Auto-queue** (v0.8) — a per-chat-session queue of tasks that runs unattended when the «Автоочередь» toggle is on. Every task is an ordinary run; a finished task passes the check command, becomes its own version, and the next task is seeded from the last successful version (`basePath`) while the diff base stays the real project. Night-shift rules, a check gate, parking and a results card; the Orchestrator is not a queue mode yet — the picker shows it disabled with the reason and the API refuses it with `400 queue/mode-unsupported`.
 - **Factory** (v0.8) — a per-project ticket board run by agents: incoming tickets go through triage, work, tests, app check and review with repair rounds and land in «Готово к PR», where only the user opens a PR or merges. Tickets come from the board's incoming field, GitHub issues and GitHub/GitLab/Jira/Linear polling. The factory itself never sends anything outward.
 
 The real project is never written by an agent: agents run with cwd = copy. Apply is a user action, in our UI.
@@ -398,7 +398,9 @@ with a single agent, `run.agents[0]` (role `planner`), created with `sandboxMode
 `cwd = projectPath`: it reads the real project and cannot edit anything. No copy is made at start; the
 engine records `baseHashes` with `hashTree(project)` and keeps that manifest as the common base for every
 part copy. The start request asks the planner for `orchestratorParts` parts (default 3, clamped 2–4); the
-parser never accepts more than `MAX_ORCHESTRATOR_PARTS = 4` and folds the rest into the last part.
+parser never accepts more than `MAX_ORCHESTRATOR_PARTS = 4` and folds the rest into the last part. Because
+the planner reads the real project and every part copies it again, an Orchestrator run cannot be seeded from
+a saved version (`basePath` is ignored); that is why it is not an auto-queue mode yet — see **Auto-queue**.
 
 The host keeps a `runtime.orch` for the run (host-side only, never persisted — see **Data model**):
 
@@ -436,8 +438,9 @@ The host keeps a `runtime.orch` for the run (host-side only, never persisted —
 
 A queue is a per-chat-session list of ordinary tasks that runs unattended while the «Автоочередь» toggle
 is on. The pure half is `lib/queue.js`: task states (`queued`, `running`, `passed`, `parked`, `skipped`,
-`stopped`), the transition table `TASK_TRANSITIONS`, `QUEUE_MODES` (Solo, Swarm, Conductor, Fusion — the
-Orchestrator is deliberately not a queue mode), the helpers `nextQueuedTask`, `queueCounts`, `endsWithQuestion`,
+`stopped`), the transition table `TASK_TRANSITIONS`, `QUEUE_MODES` (Solo, Swarm, Conductor, Fusion), the
+mode guard `queueModeRefusal` (the Orchestrator is shown disabled in the picker and refused by the route with
+`400 queue/mode-unsupported`, because it cannot start from a saved version yet), the helpers `nextQueuedTask`, `queueCounts`, `endsWithQuestion`,
 `parkedBranch`, `classifyFailure`, `resetMinutes`, `stopReasonLabel`, `resultsCard` and `queueSummary`, the
 constants (`DEFAULT_QUEUE_LIMIT = 20`, `MAX_QUEUE_TASKS = 200`, `QUEUE_TUNING { maxFixes: 2, maxQuestions: 1,
 maxConsecutiveParks: 3, retryDelayMs: 15 min, minDiskBytes: 500 MB, checkTimeoutMs: 15 min }`) and

@@ -595,6 +595,31 @@ test('the queue route forwards new tasks to addTasks', async () => {
   assert.equal(noSession.body.code, 'artel/bad-request')
 })
 
+test('the queue route refuses modes it cannot run instead of silently running Solo', async () => {
+  const queueRunner = fakeQueueRunner()
+  const { webServer } = setup({ queueRunner })
+
+  const orchestrator = await call(webServer.routes, `${API_PREFIX}/queue`, {
+    method: 'POST',
+    body: { sessionId: 's1', task: 'Plan the release', mode: 'orchestrator' },
+  })
+  assert.equal(orchestrator.status, 400)
+  assert.equal(orchestrator.body.code, 'queue/mode-unsupported')
+  assert.match(orchestrator.body.error, /Orchestrator is not an auto-queue mode/)
+  assert.match(orchestrator.body.error, /saved version/)
+  assert.equal(queueRunner.calls.length, 0, 'a refused mode never reaches addTasks')
+
+  const unknown = await call(webServer.routes, `${API_PREFIX}/queue`, {
+    method: 'POST',
+    body: { sessionId: 's1', task: 'Do the thing', mode: 'banana' },
+  })
+  assert.equal(unknown.status, 400)
+  assert.equal(unknown.body.code, 'queue/mode-unknown')
+  assert.match(unknown.body.error, /banana/)
+  assert.match(unknown.body.error, /solo, swarm, conductor, fusion/)
+  assert.equal(queueRunner.calls.length, 0, 'an unknown mode never reaches addTasks')
+})
+
 test('the queue autopilot route forwards its flags and decisions', async () => {
   const queueRunner = fakeQueueRunner()
   const { webServer } = setup({ queueRunner })

@@ -1643,8 +1643,8 @@ test('all three dictionaries carry the Conductor and Fusion mode and role labels
       assert.equal(dictionaries[locale]?.[key], expected[locale][key], locale + ' has ' + key)
     }
   }
-  assert.equal(state.report.version, '0.8.2', 'the diagnostics report carries the release version')
-  assert.equal(state.realm.window.__DSH_ARTEL_DEBUG__.version, '0.8.2')
+  assert.equal(state.report.version, '0.8.3', 'the diagnostics report carries the release version')
+  assert.equal(state.realm.window.__DSH_ARTEL_DEBUG__.version, '0.8.3')
 })
 
 test('modeLabel, agentProgress and agentRole know the conductor', () => {
@@ -2302,7 +2302,7 @@ test('all three dictionaries carry the auto-queue and factory strings', () => {
     assert.deepEqual(Object.keys(dictionaries[locale]).sort(), english, locale + ' has every English key')
   }
   const queueAndFactory = english.filter((key) => key.startsWith('queue.') || key.startsWith('factory.'))
-  assert.equal(queueAndFactory.length, 186, 'every queue and factory string is present')
+  assert.equal(queueAndFactory.length, 187, 'every queue and factory string is present')
   const expected = {
     en: {
       'queue.title': 'Waiting',
@@ -2352,6 +2352,13 @@ test('queue and factory view-model helpers are exposed on the debug bridge', () 
   const enT = (key) => (debug.dictionaries.en[key] !== undefined ? debug.dictionaries.en[key] : key)
 
   assert.deepEqual(debug.queueHelpers.modes, ['solo', 'swarm', 'conductor', 'fusion'])
+  const modeOptions = debug.queueHelpers.modeOptions(ruT)
+  assert.deepEqual(modeOptions.map((option) => option.value), ['solo', 'swarm', 'conductor', 'fusion', 'orchestrator'])
+  assert.equal(modeOptions.length, 5)
+  assert.equal(modeOptions[4].label, 'Оркестратор')
+  assert.equal(modeOptions[4].disabled, true, 'the Orchestrator is shown disabled in the queue picker')
+  assert.equal(modeOptions[4].hint, 'Недоступен: пока не умеет стартовать с сохранённой версии.')
+  assert.ok(modeOptions.slice(0, 4).every((option) => option.disabled !== true && option.hint === undefined))
   assert.equal(debug.queueHelpers.statusLabel(ruT, 'queued'), 'В очереди')
   assert.equal(debug.queueHelpers.statusLabel(ruT, 'passed'), 'Версия сохранена')
   assert.equal(debug.queueHelpers.statusLabel(ruT, 'bogus'), 'bogus')
@@ -2465,6 +2472,77 @@ test('the new-session screen queues a task and flips «Автоочередь»'
   assert.deepEqual(posted.body.texts, ['Почини тесты'])
   assert.equal(posted.body.mode, 'solo')
   assert.equal(posted.body.sessionId, 'sess-1')
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('the queue mode picker shows the Orchestrator disabled and cannot choose it', async () => {
+  const current = { queue: queueFixture() }
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [],
+      route: ({ method, pathname, body }) => {
+        if (pathname === '/api/dsh-artel/queue' && method === 'GET') return reply(current.queue)
+        if (pathname === '/api/dsh-artel/queue' && method === 'POST') {
+          const added = { ...queueFixture().tasks[0], id: 'q-new', text: body.task, title: body.task, mode: body.mode }
+          current.queue = { ...current.queue, tasks: [...current.queue.tasks, added] }
+          return reply({ queue: current.queue, added: 1 })
+        }
+        if (pathname === '/api/dsh-artel/factory' && method === 'GET') return reply({ boards: [] })
+        return undefined
+      },
+    },
+  })
+  let opened = await openArtel(state)
+  const strip = findByClass(opened, 'dsh-artel-queue')
+  assert.ok(strip !== undefined, 'the hero shows the «Ожидают» strip')
+  assert.ok(findByClass(strip, 'dsh-artel-queue__add') !== undefined, 'the add-task row is rendered')
+  const selectTrigger = () => findAll(findByClass(opened, 'dsh-artel-queue__add'), (node) => node.type === 'button'
+    && String(node.props.className).split(/\s+/).includes('dsh-artel-select'))[0]
+  const trigger = selectTrigger()
+  assert.ok(trigger !== undefined, 'the queue mode picker is rendered')
+  trigger.props.onClick()
+  opened = await state.realm.renderer.flush()
+  const menu = findByClass(opened, 'dsh-artel-menu')
+  assert.ok(menu !== undefined, 'the mode picker opens')
+  const options = findAll(menu, (node) => node.props?.role === 'option')
+  assert.deepEqual(options.map((node) => node.props['data-value']), ['solo', 'swarm', 'conductor', 'fusion', 'orchestrator'])
+  const orchestrator = options.find((node) => node.props['data-value'] === 'orchestrator')
+  assert.equal(orchestrator.props['aria-disabled'], 'true')
+  assert.equal(orchestrator.props['data-disabled'], 'true')
+  assert.match(textOf(orchestrator), /Недоступен: пока не умеет стартовать с сохранённой версии/)
+
+  // A click on the disabled entry is ignored; the menu stays open to explain itself.
+  orchestrator.props.onClick()
+  opened = await state.realm.renderer.flush()
+  assert.equal(selectTrigger().props['data-value'], 'solo', 'the disabled entry cannot be chosen')
+  assert.ok(findByClass(opened, 'dsh-artel-menu') !== undefined, 'the menu stays open after the disabled click')
+
+  // The keyboard model skips the disabled entry: End lands on the last runnable mode,
+  // and ArrowDown there does not reach the Orchestrator either.
+  selectTrigger().props.onKeyDown({ key: 'End', preventDefault() {} })
+  opened = await state.realm.renderer.flush()
+  const active = () => findAll(findByClass(opened, 'dsh-artel-menu'), (node) => node.props?.role === 'option' && node.props['data-active'] === 'true')
+  assert.equal(active().length, 1)
+  assert.equal(active()[0].props['data-value'], 'fusion')
+  selectTrigger().props.onKeyDown({ key: 'ArrowDown', preventDefault() {} })
+  opened = await state.realm.renderer.flush()
+  assert.equal(active()[0].props['data-value'], 'fusion')
+
+  // A runnable mode still closes the menu and reaches the add-task call.
+  pickOption(opened, 'swarm')
+  opened = await state.realm.renderer.flush()
+  assert.equal(selectTrigger().props['data-value'], 'swarm')
+  assert.equal(findByClass(opened, 'dsh-artel-menu'), undefined)
+  const input = findAll(opened, (node) => node.type === 'input' && String(node.props.className).includes('dsh-artel-queue__input'))[0]
+  input.props.onChange({ target: { value: 'Проверь очередь' } })
+  opened = await state.realm.renderer.flush()
+  findButton(findByClass(opened, 'dsh-artel-queue'), 'В очередь').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  const posted = state.realm.calls.find((call) => call.pathname === '/api/dsh-artel/queue' && call.method === 'POST')
+  assert.ok(posted !== undefined, 'adding a task reached the Host')
+  assert.equal(posted.body.mode, 'swarm')
   state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
 })
 

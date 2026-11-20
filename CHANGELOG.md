@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.3] — 2026-11-21
+
+### Fixed
+
+- **The auto-queue picker now explains the missing Orchestrator.** The «Автоочередь» mode picker lists
+  **Оркестратор** after Solo, Swarm, Conductor and Fusion, disabled and with a one-line reason: a queued
+  task starts from the last saved version, and the Orchestrator cannot start from a saved version yet. The
+  keyboard model and clicks skip the disabled entry, so it cannot be chosen by accident (issue #3).
+- **A queue request with an unsupported mode is refused instead of silently becoming Solo.** `POST
+  /api/dsh-artel/queue` with `mode: "orchestrator"` answers `400 queue/mode-unsupported` with that
+  explanation, and an unknown mode answers `400 queue/mode-unknown` listing the four modes a task may use;
+  previously `createTaskRecord` quietly replaced any other mode with `solo`.
+
 ## [0.8.2] — 2026-11-21
 
 ### Fixed

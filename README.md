@@ -152,9 +152,11 @@ with a warning in the feed.
 ## Auto-queue — the night shift
 
 Every chat session has a queue. Stack tasks in the **Waiting** column with **Add**: each one is an ordinary
-Artel run with its own mode and model — Solo, Swarm, Conductor or Fusion, not Orchestrator — but it waits
-its turn instead of starting at once. The queue belongs to the session, so another chat has its own; a chat
-message sent while the queue is running becomes the first task instead of interrupting the agent.
+Artel run with its own mode and model — Solo, Swarm, Conductor or Fusion — but it waits its turn instead of
+starting at once. The Orchestrator is shown in that picker disabled, with the reason: a queued task starts
+from the last saved version, and the Orchestrator cannot start from a saved version yet. The queue belongs
+to the session, so another chat has its own; a chat message sent while the queue is running becomes the first
+task instead of interrupting the agent.
 
 Flip **Auto-queue** and the stack becomes an unattended night shift. Before the first task the pre-flight
 asks you to decide about earlier versions that were never saved or parked, shows the check command and the

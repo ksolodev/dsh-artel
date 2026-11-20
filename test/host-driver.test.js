@@ -29,8 +29,45 @@ function fakeSession(id, mode = 'read-only') {
       if (type === 'sandbox/mode') session.mode = data.mode
       return { type, data }
     },
+    ownEvents() {
+      return session.appended.map((entry) => ({ type: entry.type, data: entry.data }))
+    },
   }
   return session
+}
+
+/** Minimal fake Workspace entity with the members the sidebar bridge touches. */
+function fakeWorkspace({ id = 'ws-1', path = 'C:\\project', sessionIds = [] } = {}) {
+  const state = { record: { id, path, title: 'project', sessionIds: [...sessionIds], createdAt: 1, updatedAt: 1 } }
+  const paths = new Map()
+  const writes = []
+  const host = {
+    rememberSessionPath(sessionId, projectPath) {
+      paths.set(sessionId, projectPath)
+    },
+    candidateMatches(sessionId, projectPath) {
+      return paths.get(sessionId) === projectPath
+    },
+  }
+  return {
+    id,
+    path,
+    host,
+    paths,
+    writes,
+    get record() {
+      return state.record
+    },
+    get sessionIds() {
+      return state.record.sessionIds.filter((sessionId) => host.candidateMatches(sessionId, state.record.path))
+    },
+    mutate(change) {
+      const next = change(state.record)
+      if (next === state.record) throw new Error('no change')
+      state.record = { ...next, updatedAt: 2 }
+      writes.push({ ...next })
+    },
+  }
 }
 
 /** Minimal fake Host services: session controller, agent registry, subagent runtime, policies. */
@@ -80,6 +117,14 @@ function fakeHost(options = {}) {
       const session = sessionOf(request.sessionId, options.childMode ?? 'read-only')
       const agent = options.noSessions === true ? { id: request.sessionId } : { id: request.sessionId, session }
       liveAgents.set(request.sessionId, attachModel(agent))
+      // The real controller creates the Session and only then tries the
+      // Workspace attach, reporting the failure with the id it made.
+      if (request.workspaceId !== undefined && options.attachFailureId !== undefined) {
+        const error = new Error(`session could not attach to workspace ${request.workspaceId}`)
+        error.code = 'session/workspace-attach-failed'
+        error.details = { sessionId: options.attachFailureId, workspaceId: request.workspaceId }
+        throw error
+      }
       return { sessionId: request.sessionId }
     },
     async rename(request) {
@@ -172,6 +217,18 @@ function fakeHost(options = {}) {
       if (name === 'sandboxPolicy') return sandboxPolicy
       if (name === 'tokenMeter') return options.tokenMeter
       if (name === 'sessionProjections') return options.projections
+      if (name === 'workspaceRegistry') {
+        if (options.workspaceRegistry !== undefined) return options.workspaceRegistry
+        const workspaces = Array.isArray(options.workspaces) ? options.workspaces : null
+        if (workspaces === null) return undefined
+        return {
+          list: () => workspaces,
+          get: (id) => workspaces.find((workspace) => workspace.id === id),
+          async resolveByPath(projectPath) {
+            return workspaces.find((workspace) => workspace.path === projectPath)
+          },
+        }
+      }
       return undefined
     },
     on(event, handler) {
@@ -707,4 +764,128 @@ test('a refused or unreachable route degrades to a warning, it does not kill the
   })
   assert.match(blindHandle.modelError, /cannot reach the live Agent/)
   await blindDriver.dispose()
+})
+
+test('the driver files an agent chat under its project without touching its cwd', async () => {
+  const workspace = fakeWorkspace()
+  const host = fakeHost({ workspaces: [workspace] })
+  const driver = new HostDriver(host.ctx, { log: { warn() {} } })
+  await driver.init()
+  try {
+    assert.equal(driver.supportsProjectChats(), true)
+    const handle = await driver.createAgent({
+      name: 'Vega',
+      mode: 'solo',
+      projectPath: 'C:\\project',
+      copyPath: 'C:\\copies\\run-1',
+      agentId: 'run-1-a1',
+    })
+    // The sandbox boundary stays the copy: the Session is still created with
+    // cwd = copy and no workspaceId.
+    assert.deepEqual(host.calls.created[0], { sessionId: handle.sessionId, cwd: 'C:\\copies\\run-1' })
+    assert.ok(workspace.record.sessionIds.includes(handle.sessionId), 'the chat is in the project record')
+    assert.equal(workspace.paths.get(handle.sessionId), 'C:\\project', 'the cwd index is primed for the project')
+    assert.ok(workspace.sessionIds.includes(handle.sessionId), 'the sidebar filter shows the chat')
+  } finally {
+    await driver.dispose()
+  }
+})
+
+test('a project folder that is not an open Workspace keeps the old grouping', async () => {
+  const host = fakeHost({ workspaces: [] })
+  const driver = new HostDriver(host.ctx, { log: { warn() {} } })
+  await driver.init()
+  const handle = await driver.createAgent({
+    name: 'Vega',
+    mode: 'solo',
+    projectPath: 'C:\\loose',
+    copyPath: 'C:\\copies\\run-1',
+    agentId: 'run-1-a1',
+  })
+  assert.equal(driver.supportsProjectChats(), true, 'the registry exists, the folder just is not in it')
+  assert.equal(handle.sessionId.startsWith('session-'), true, 'the agent session is still created')
+  await driver.dispose()
+})
+
+test('the driver creates a read-only task chat inside the project workspace', async () => {
+  const workspace = fakeWorkspace()
+  const host = fakeHost({ workspaces: [workspace] })
+  const driver = new HostDriver(host.ctx, { log: { warn() {} } })
+  await driver.init()
+  try {
+    const chat = await driver.createTaskChat({ projectPath: 'C:\\project', task: 'Add a settings screen' })
+    assert.equal(chat.workspaceId, 'ws-1')
+    assert.equal(chat.title, 'Artel · Add a settings screen')
+    // A legit member: the controller receives workspaceId, not cwd.
+    assert.deepEqual(host.calls.created[0], { sessionId: chat.sessionId, workspaceId: 'ws-1' })
+    assert.deepEqual(host.calls.renames[0], { sessionId: chat.sessionId, title: 'Artel · Add a settings screen' })
+    const session = host.sessions.get(chat.sessionId)
+    assert.deepEqual(session.appended.find((event) => event.type === 'sandbox/mode'), { type: 'sandbox/mode', data: { mode: 'read-only' } })
+    // A blank chat would hide its title behind the New Session label and could be
+    // reused as the next draft, so the chat gets one empty finished turn.
+    const turnStart = session.appended.findIndex((event) => event.type === 'turn/start')
+    const turnEnd = session.appended.findIndex((event) => event.type === 'turn/end')
+    assert.ok(turnStart >= 0, 'the task chat is marked as started')
+    assert.ok(turnEnd > turnStart, 'the synthetic turn is closed right away')
+    assert.deepEqual(session.appended[turnStart], { type: 'turn/start', data: { turn: 1 } })
+    assert.deepEqual(session.appended[turnEnd], { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
+    assert.ok(workspace.record.sessionIds.includes(chat.sessionId), 'the membership is repaired defensively')
+  } finally {
+    await driver.dispose()
+  }
+})
+
+test('a task chat stays reachable when the workspace attach fails after creation', async () => {
+  const workspace = fakeWorkspace()
+  const host = fakeHost({ workspaces: [workspace], attachFailureId: 'session-recovered' })
+  // The recovered chat already carries a turn (the attach failed after the chat
+  // was used), so the mark-started repair must not append a second one.
+  const recovered = fakeSession('session-recovered')
+  recovered.appended.push({ type: 'turn/start', data: { turn: 1 } }, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
+  host.sessions.set('session-recovered', recovered)
+  const driver = new HostDriver(host.ctx, { log: { warn() {} } })
+  await driver.init()
+  try {
+    const chat = await driver.createTaskChat({ projectPath: 'C:\\project', task: 'Still start' })
+    assert.equal(chat.sessionId, 'session-recovered', 'the created chat is not lost with the attach error')
+    assert.ok(workspace.record.sessionIds.includes('session-recovered'), 'the bridge files it anyway')
+    assert.equal(recovered.appended.filter((event) => event.type === 'turn/start').length, 1, 'an already started chat is left alone')
+  } finally {
+    await driver.dispose()
+  }
+})
+
+test('no workspace for this version means no task chat and no bridge', async () => {
+  const loose = fakeHost({ workspaces: [] })
+  const looseDriver = new HostDriver(loose.ctx, { log: { warn() {} } })
+  await looseDriver.init()
+  assert.equal(await looseDriver.createTaskChat({ projectPath: 'C:\\loose', task: 'x' }), null)
+  assert.deepEqual(loose.calls.created, [])
+  await looseDriver.dispose()
+
+  const bare = fakeHost()
+  const bareDriver = new HostDriver(bare.ctx, { log: { warn() {} } })
+  await bareDriver.init()
+  assert.equal(bareDriver.supportsProjectChats(), false)
+  assert.equal(await bareDriver.createTaskChat({ projectPath: 'C:\\project', task: 'x' }), null)
+  assert.equal(await bareDriver.attachProjectChat({ sessionId: 'session-1', projectPath: 'C:\\project' }), null)
+  await bareDriver.dispose()
+})
+
+test('restoreProjectChats re-primes the chats of opted-in runs only', async () => {
+  const workspace = fakeWorkspace()
+  const host = fakeHost({ workspaces: [workspace] })
+  const driver = new HostDriver(host.ctx, { log: { warn() {} } })
+  await driver.init()
+  try {
+    const result = await driver.restoreProjectChats([
+      { projectChats: true, projectPath: 'C:\\project', sessionId: 'session-task-1', agents: [{ sessionId: 'session-agent-1' }] },
+      { projectPath: 'C:\\project', sessionId: 'session-old', agents: [{ sessionId: 'session-old-agent' }] },
+    ])
+    assert.deepEqual(result, { attached: 2, skipped: 0, failed: 0 })
+    assert.ok(workspace.record.sessionIds.includes('session-agent-1'))
+    assert.equal(workspace.record.sessionIds.includes('session-old-agent'), false)
+  } finally {
+    await driver.dispose()
+  }
 })

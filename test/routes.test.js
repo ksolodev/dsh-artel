@@ -313,7 +313,19 @@ test('starting a run uses the body project path or resolves it', async () => {
     task: 'Add a screen',
     model: undefined,
     models: undefined,
+    // A task started from a chat gets its own chat in the project.
+    newChat: true,
   })
+})
+
+test('a start can keep the chat it came from', async () => {
+  const { webServer, engine } = setup()
+  const response = await call(webServer.routes, `${API_PREFIX}/runs`, {
+    method: 'POST',
+    body: { sessionId: 'session-1', projectPath: 'C:\\work\\app', mode: 'solo', task: 'Stay here', newChat: false },
+  })
+  assert.equal(response.status, 201)
+  assert.equal(engine.calls.find((entry) => entry.method === 'start').request.newChat, false)
 })
 
 test('a Fusion start passes the per-slot routes through', async () => {

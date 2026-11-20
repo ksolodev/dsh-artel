@@ -107,7 +107,8 @@ type RunStatus = 'preparing' | 'planning' | 'running' | 'waiting' | 'finished' |
 
 interface RunRecord {
   id: string
-  sessionId: string        // owning chat session
+  sessionId: string        // the task chat of this run (see Task chats and project chats)
+  originSessionId?: string // v0.11: the chat the task was started from; the per-chat run cap counts by it
   mode: Mode
   task: string
   projectPath: string
@@ -117,6 +118,9 @@ interface RunRecord {
   baseHashes: Record<string, string> // project file hash at run start (for apply conflict guard)
   status: RunStatus
   error?: string
+  taskChat?: boolean       // v0.11: the run created its own chat in the project workspace
+  taskChatWorkspaceId?: string | null // v0.11: the workspace it was filed under
+  projectChats?: boolean   // v0.11: agent chats are filed under the project (bridge available at start)
   autoqueue?: boolean      // unattended run: night-shift rules are appended to every prompt
   basePath?: string | null // seeded run: the version copy it started from (null = from the project)
   sandboxMode?: string | null // pinned sandbox mode (factory triage, app check, review agents)
@@ -259,7 +263,7 @@ All routes under `/api/dsh-artel/**`, JSON, same-origin + the connection's trust
 | GET | `/api/dsh-artel/health` | — | `{ ok, version, ... }` |
 | GET | `/api/dsh-artel/project` | `sessionId` | `{ projectPath, name }` (`projectPath: null` when unresolved) |
 | GET | `/api/dsh-artel/runs` | `sessionId` | `{ runs: RunSummary[] }` |
-| POST | `/api/dsh-artel/runs` | `{ sessionId, projectPath?, mode, task, model?, models? }` | 201 `{ run }` |
+| POST | `/api/dsh-artel/runs` | `{ sessionId, projectPath?, mode, task, model?, models?, newChat? }` | 201 `{ run }` — `newChat` defaults to `true`: the run gets a task chat (see below), and the returned `run.sessionId` is that chat |
 | GET | `/api/dsh-artel/runs/:id` | `cursor?`, `limit?` | `{ run, feed, cursor }` |
 | POST | `/api/dsh-artel/runs/:id/messages` | `{ text, agentId? }` | `{ ok }` |
 | POST | `/api/dsh-artel/runs/:id/interrupt` | — | `{ ok }` |
@@ -326,6 +330,23 @@ import field and localizes it by code.
 - **Diff**: git copy → `git add -A` (in the copy) then `git diff --cached <baseCommit>`; non-git → compare against the base hash manifest, diff each changed text file with a small internal line diff (LCS). Result: `[{path, status: 'added'|'modified'|'deleted', added, removed, binary}]` + per-file patch text.
 - **Apply**: for each changed file, verify the project file still matches `baseHashes` (otherwise `skipped: user edited this file during the run`), then write/delete it. Git repo additionally offers nothing fancier in v1 — copy-back is predictable and works for new/deleted files. Report a per-file result; never partially apply silently. An Orchestrator run with an unfinished merge (`merge.unresolved` non-empty) is refused before any of this with `409 artel/merge-incomplete`.
 - **Cleanup**: `discard`/`apply` removes the worktree (`git worktree remove --force`) or deletes the copy dir; a startup sweep removes copies whose run is terminal and older than `keepCopiesHours`; the project itself is only ever touched by `apply`.
+
+## Task chats and project chats (v0.11, issue #10)
+
+The DSH Host derives sidebar grouping from the **Workspace** record, not from the client: `Workspace.sessionIds` is filtered by `host.candidateMatches(sessionId, workspace.path)`, which is an in-memory index of stored Session **header** cwds (`dsh-workspace`). Two Harness rules therefore collide:
+
+- a Session joins a Workspace only when `realpath(header.cwd) === workspace.path`; and
+- `session.create` accepts **either** `workspaceId` **or** `cwd`, never both (`dsh-api-session-controller`: `session.create accepts workspaceId or cwd, not both`).
+
+So an agent whose header cwd is the run's copy (required for isolation — the sandbox workspace root is the immutable header cwd) can never be a normal member of the project's Workspace. Artel resolves this plugin-side, without patching DSH (`lib/project-chats.js`):
+
+- **Task chat** — `HostDriver.createTaskChat()` calls `sessionController.create({ sessionId: 'session-<uuid>', workspaceId })` with the project's workspace (found by `workspaceRegistry.resolveByPath(projectPath)`; no `cwd`, so the chat gets the workspace path and a real membership). It is renamed `Artel · <task>`, pinned `read-only` through `session.append('sandbox/mode')`, and `engine.start` stores it as `run.sessionId`. The client then switches to it with the `uiWorkspace.openSession(sessionId)` service (best-effort: the client polls the service, retries while the session list catches up, and loads the run in place if there is no switcher). The source chat keeps no run and no panel. `newChat: false` keeps the old behavior and is used only by callers that already own a chat.
+- **Authorship of blank chats** — a DSH Session is `blank` until its log has a `turn/start`; a blank session hides its title behind the localized New Session label and can be reused as the project's next draft. After creating the task chat (and only when it has no `turn/start` yet) the driver appends a finished empty turn — `turn/start {turn: 1}` then `turn/end {turn: 1, reason: {kind: 'completed'}}` — the same closed-log shape `dsh-session/repair` writes. Nothing reaches a model.
+- **Agent chats** — every agent session keeps `cwd = copyPath` (isolation unchanged). After it is created, Artel files it under the project workspace by priming the membership index and appending to the durable record: `workspace.host.rememberSessionPath(sessionId, workspace.path)` then `workspace.mutate(record => record.sessionIds.includes(id) ? record : {...record, sessionIds: [id, ...record.sessionIds]})`. This is best-effort and feature-detected; `HostDriver.supportsProjectChats()` is false when there is no `workspaceRegistry`, and everything falls back to the pre-v0.11 grouping.
+- **Restart** — the Harness rebuilds the membership index from stored session headers on boot, so injected ids are pending until re-primed. `engine.restoreProjectChats()` (called from `boot()` right after `engine.init()`) walks `RunStore.all()` and re-files every session of runs marked `projectChats: true` (`run.sessionId` + `agent.sessionId`), then logs `re-filed N project chat(s) in the sidebar`.
+- **Scope** — only `POST /runs` (the interactive panel) creates task chats. Queue runs reuse the chat that owns the queue, and Factory runs use synthetic ids (`factory-<board>-<ticket>…`) with no chat, so `newChat` stays `false` there. Old runs are not migrated.
+
+New surface: `lib/project-chats.js` (`isSessionId`, `workspaceRegistryOf`, `projectWorkspaceOf`, `attachSessionToWorkspace`, `attachProjectChat`, `taskChatTitle`, `restoreProjectChats`), `HostDriver.createTaskChat/attachProjectChat/supportsProjectChats/restoreProjectChats`, `ArtelEngine.restoreProjectChats`, the `newChat` route flag, and on the client the `uiWorkspace` watcher plus the per-agent "open chat" buttons (`run.openSession`) in the route bar and the **Right now** strip.
 
 ## Post-apply install (v0.9)
 
@@ -648,6 +669,7 @@ dsh-artel/
   lib/client.js           # window.__ModuleLoader__.load({ id:'dsh-artel', factory(require){...} })
   lib/*.js                # host modules: run-store.js copy.js diff.js models.js conductor.js fusion.js orchestrator.js
                           #   check.js trackers.js queue.js queue-runner.js factory.js factory-runner.js routes.js host-driver.js engine.js
+                          #   project-chats.js (v0.11: task chats + workspace membership bridge)
   locale/{en,ru,zh}.json  # meta.title/meta.description + strings
   icon.svg
   README.md, LICENSE
@@ -659,7 +681,7 @@ Server code is plain ESM JavaScript (no TS) so nothing has to be compiled; the c
 
 ## Config (schemastery)
 
-`copyRoot` (default `<DSH_HOME>/artel/<profile>/copies`), `stateDir` (default `<DSH_HOME>/artel/<profile>/state`; run records and feeds live in `runs/` and `feeds/`, and the v0.8 stores in `queue/`, `tickets/boards.json` and `attachments/`), `swarmAgentCount` (3, 2..8; a Conductor run starts one conductor on top, so `1 + this` agents), `orchestratorParts` (3, 2..4; an Orchestrator plan with more parts is folded into the last one), `maxRunsPerSession` (10), `keepCopiesHours` (72), `diffContext` (3), `idleGraceMs` (1200, how long a potential peer message may still be in flight before the run is called idle), `excludeGlobs` for non-git copies. The auto-queue and the Factory add no config keys: their settings are per session (queue) and per board (tickets). No behavior-changing defaults that surprise.
+`copyRoot` (default `<DSH_HOME>/artel/<profile>/copies`), `stateDir` (default `<DSH_HOME>/artel/<profile>/state`; run records and feeds live in `runs/` and `feeds/`, and the v0.8 stores in `queue/`, `tickets/boards.json` and `attachments/`), `swarmAgentCount` (3, 2..8; a Conductor run starts one conductor on top, so `1 + this` agents), `orchestratorParts` (3, 2..4; an Orchestrator plan with more parts is folded into the last one), `maxRunsPerSession` (10; with task chats it is counted per chat the task was started from — `run.originSessionId` — so every task chat cannot keep an extra run forever), `keepCopiesHours` (72), `diffContext` (3), `idleGraceMs` (1200, how long a potential peer message may still be in flight before the run is called idle), `excludeGlobs` for non-git copies. The auto-queue and the Factory add no config keys: their settings are per session (queue) and per board (tickets). No behavior-changing defaults that surprise.
 
 ## Milestones
 

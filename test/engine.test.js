@@ -49,6 +49,38 @@ class FakeDriver {
   bundleInstalls = []
   /** What the fake plugin manager answers, or the Error it throws. */
   bundleResult = { changed: true, application: 'restart-required', stage: 'install', target: '', restartReason: 'no-hmr' }
+  /** Set to false to model a profile without the Workspace registry. */
+  projectChats = true
+  /** Task chats the engine asked for, in start order. */
+  taskChats = []
+  /** Runs the engine handed to `restoreProjectChats`. */
+  restoredRuns = null
+  /** Set to true to model a project folder that is not an open Workspace. */
+  noWorkspace = false
+  /** Makes `createTaskChat` throw, like a host that refuses a new chat. */
+  taskChatError = null
+
+  supportsPeers() {
+    return this.peers
+  }
+
+  supportsProjectChats() {
+    return this.projectChats
+  }
+
+  async createTaskChat({ projectPath, task, sandboxMode = 'read-only' }) {
+    if (this.taskChatError !== null) throw this.taskChatError
+    if (this.noWorkspace === true) return null
+    const sessionId = `session-task-${this.taskChats.length + 1}`
+    this.taskChats.push({ sessionId, projectPath, task, sandboxMode })
+    return { sessionId, workspaceId: 'ws-1', title: `Artel · ${task}` }
+  }
+
+  async restoreProjectChats(runs) {
+    const eligible = (Array.isArray(runs) ? runs : []).filter((run) => run?.projectChats === true)
+    this.restoredRuns = eligible
+    return { attached: eligible.length, skipped: 0, failed: 0 }
+  }
 
   async listModels() {
     return this.models
@@ -63,10 +95,6 @@ class FakeDriver {
     this.selections.push({ agent: handle.name, selection })
     handle.model = selection
     return selection
-  }
-
-  supportsPeers() {
-    return this.peers
   }
 
   supportsBundleInstall() {
@@ -2159,6 +2187,128 @@ test('a run without install needs reports no install offers', async () => {
     assert.equal(await f.engine.installPlan(run.id), null)
     const feed = await f.engine.readFeed(run.id, { cursor: 0 })
     assert.equal(feed.events.some((event) => event.kind === 'status' && /install/i.test(event.text)), false, 'no install talk on a plain change')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('a task started from a chat gets its own chat and the run moves there', async () => {
+  const f = await fixture('task-chat')
+  try {
+    const run = await f.engine.start({
+      sessionId: 's1',
+      projectPath: f.projectPath,
+      mode: 'solo',
+      task: 'Add a settings screen',
+      newChat: true,
+    })
+    assert.equal(run.sessionId, 'session-task-1', 'the run is bound to the new chat')
+    assert.equal(f.driver.taskChats.length, 1)
+    assert.equal(f.driver.taskChats[0].projectPath, f.projectPath)
+    assert.equal(f.driver.taskChats[0].task, 'Add a settings screen')
+    assert.equal(f.driver.taskChats[0].sandboxMode, 'read-only', 'the task chat cannot write into the project')
+    assert.equal(f.store.get(run.id).taskChat, true)
+    assert.equal(f.store.get(run.id).projectChats, true, 'the run opts into the sidebar filing')
+    assert.equal(f.store.get(run.id).originSessionId, 's1', 'the per-chat run cap counts from the source chat')
+    // The source chat keeps no run; the new chat lists it.
+    assert.deepEqual(f.engine.listRuns('s1'), [])
+    assert.equal(f.engine.listRuns('session-task-1').length, 1)
+    // The agents still start in the copy and inherit from the source chat, not
+    // from the read-only task chat.
+    assert.equal(f.driver.created[0].parentSessionId, 's1')
+    assert.equal(f.driver.created[0].copyPath, run.copyPath)
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('the per-chat run cap counts task chats by the chat the task came from', async () => {
+  const f = await fixture('task-chat-prune', { maxRunsPerSession: 1 })
+  try {
+    const first = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'First', newChat: true })
+    // Older by a second, so the order does not depend on the clock granularity.
+    await f.store.patch(first.id, { status: 'finished', createdAt: f.store.get(first.id).createdAt - 1000 })
+    const second = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Second', newChat: true })
+    assert.equal(f.store.get(first.id), undefined, 'the older task chat run is pruned by its source chat')
+    assert.notEqual(second.id, first.id)
+    assert.equal(f.store.all().length, 1)
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('without an open project workspace the run stays in the chat it came from', async () => {
+  const f = await fixture('task-chat-no-workspace')
+  f.driver.noWorkspace = true
+  try {
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Stay here', newChat: true })
+    assert.equal(run.sessionId, 's1', 'the old behaviour is the fallback')
+    assert.equal(f.store.get(run.id).taskChat, false)
+    assert.equal(f.engine.listRuns('s1').length, 1)
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('a host that refuses the task chat never fails the run', async () => {
+  const f = await fixture('task-chat-refused')
+  f.driver.taskChatError = new Error('the workspace index is gone')
+  try {
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Still runs', newChat: true })
+    assert.equal(run.sessionId, 's1')
+    assert.equal(f.store.get(run.id).taskChat, false)
+    assert.equal(f.engine.listRuns('s1').length, 1)
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('newChat=false keeps the previous chat', async () => {
+  const f = await fixture('task-chat-off')
+  try {
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Keep the chat' })
+    assert.equal(run.sessionId, 's1')
+    assert.equal(f.driver.taskChats.length, 0)
+    assert.equal(f.store.get(run.id).taskChat, false)
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('the project chats of stored runs are re-filed on startup, old runs are left alone', async () => {
+  const f = await fixture('task-chat-restore')
+  try {
+    const fresh = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Fresh', newChat: true })
+    assert.equal(f.store.get(fresh.id).projectChats, true)
+    // An old run: it never opted into the sidebar filing.
+    await f.store.patch(fresh.id, { projectChats: false })
+    const legacy = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Legacy' })
+    assert.equal(legacy.sessionId, 's1')
+    const result = await f.engine.restoreProjectChats()
+    assert.equal(result.attached, 1)
+    assert.equal(f.driver.restoredRuns.length, 1)
+    assert.equal(f.driver.restoredRuns[0].id, legacy.id, 'only the run that opted in is re-filed')
+    assert.equal(f.driver.restoredRuns[0].agents[0].sessionId, 'session-2')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('restoreProjectChats is a no-op without the Workspace bridge', async () => {
+  const f = await fixture('task-chat-restore-off')
+  f.driver.projectChats = false
+  try {
+    await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'No bridge' })
+    const result = await f.engine.restoreProjectChats()
+    assert.deepEqual(result, { attached: 0, skipped: 0, failed: 0 })
+    assert.equal(f.driver.restoredRuns, null)
   } finally {
     await f.engine.dispose()
     await f.cleanup()

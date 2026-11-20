@@ -5,8 +5,9 @@ in: it shows the work as it happens and moves the result into your project only 
 
 Artel opens from the chat itself. The **Артель** chip — the Artel mark and the name on the violet brand
 surface — sits in the composer tool row, next to "+"; a narrow row keeps only the mark. It lays a panel
-(overlay) over the current chat; the chat stays underneath and is not changed. The panel belongs to this
-session, and the session's working directory is the project.
+(overlay) over the current chat; the chat stays underneath. The panel shows the runs of the session it
+is opened in: a run started here gets its own task chat, and the run page lives there (see **Task chats
+and project chats**). The session's working directory is the project.
 
 ![The Artel panel: the session rail and the new-run form](artel-in-chat/screens/hero.png)
 
@@ -62,7 +63,7 @@ On the run page the route bar under the header lists the agents with their own *
 row reroutes that agent only, from its next step — the step already running keeps the route it
 started with. The bar is read-only once the run has been applied or discarded. If the Host cannot
 reach an agent, the row keeps the profile default and the feed shows a warning instead of failing
-the run.
+the run. A chat button at the end of every row opens that agent's conversation.
 
 In **Fusion** the form replaces the single route chip with five slots — **Panel 1**, **Panel 2**,
 **Panel 3**, **Judge** and **Implementer** — each with its own model and effort picker (the effort
@@ -87,6 +88,26 @@ The copy is made once per run and all agents work in it. The project itself neve
 The agents run unattended: Artel gives them the approval policy `never` and inherits the sandbox
 mode of the parent chat session. Tools that are unavailable in that sandbox return a refusal to the
 agent instead of leaving the run waiting for an approval.
+
+## Task chats and project chats
+
+Pressing **Go** does not take over the chat you opened the panel from. Artel starts a new chat for the
+task, titled **Artel · <task>**, and the run page opens in it: the chat becomes the run's own place in
+the sidebar, the rail there lists the run, and the chat you started from stays untouched — no run, no
+panel, free for other work. The task chat is read-only on purpose: the agents write only in the
+isolated copy, and the chat is where you follow the run, read the feed and apply the result. Its title
+is visible in the sidebar right away, even before the first message.
+
+Every agent of the run gets a chat in the same project group too — Solo's agent, the Swarm team, the
+conductor and its workers, the Fusion agents, and the Orchestrator's planner, parts, reviewer and
+merger — although each of them works in the run's copy. The sidebar therefore keeps one project group
+with every conversation of the run under it, instead of showing the copy folders as separate projects.
+The grouping is stored in the Host workspace and Artel re-files these chats on the next DSH start, so
+a restart keeps them under the project. Old runs are not migrated: runs started before this update
+keep their chats where they were.
+
+Open an agent's chat from the run page: the route bar and the **Right now** strip both put a chat
+button next to every agent (its tooltip says "Open the agent conversation").
 
 ## Solo
 
@@ -370,7 +391,8 @@ result» — and how long it has been waiting; a tag next to it sums the tokens 
 (hover it for input, output and cache). Under the header the **Right now** strip lists every agent:
 its state dot, the last step — the tool call it is running (`write src/app.js`) or «writing a
 reply» — the time spent on the current turn and how full its context window is, in tokens and
-percent, with the composition (system, tools, messages) in the tooltip. All of it is part of the run
+percent, with the composition (system, tools, messages) in the tooltip. The chat button at the end of
+the row opens that agent's conversation. All of it is part of the run
 summary the Host already sends, so it costs no extra request.
 
 ![The run page: agent replies and grouped tool calls](artel-in-chat/screens/run.png)
@@ -506,7 +528,10 @@ click, and a project without a bundle or install steps shows no install block at
 - Auto-queue and Factory: `<DSH home>/artel/<profile>/state/queue/<session>.json` (one queue per chat
   session), `.../state/tickets/boards.json` (ticket boards) and `.../state/attachments/<board>/<ticket>/`
   (ticket files).
-- Agent conversations: ordinary DSH sessions in your session store.
+- Agent conversations: ordinary DSH sessions in your session store — the task chat with the run's
+  project as its working directory (read-only) and one chat per agent with the run's copy as its
+  working directory. Their place in the sidebar project group is kept in
+  `<DSH home>/storages/workspace.json` (the Host workspace) and re-filed by Artel at every start.
 
 Artel keeps at most `maxRunsPerSession` runs per session: the oldest finished runs (applied,
 discarded, stopped, failed) are dropped from the list together with their copies. Runs still waiting

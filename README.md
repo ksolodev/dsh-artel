@@ -13,7 +13,8 @@ Artel is a DeepSeek Harness plugin. It adds a labelled **Artel** chip — the br
 the violet brand surface — to the chat composer tool row, next to **+**; a row narrower than 460px keeps
 only the mark. Clicking it covers the current chat with a panel: the session rail of Artel runs on the
 left, and either the new-run form or the live run on the right. The chat session's working directory is
-the project; Artel never touches it until you apply.
+the project; Artel never touches it until you apply. A run started from the panel gets its own chat,
+titled `Artel · <task>`, under the project in the sidebar, so the chat you started from stays clean.
 
 ![Artel opens over the chat](docs/artel-in-chat/screens/hero.png)
 
@@ -52,10 +53,15 @@ must run on the same machine.
 
 ## How it works
 
-1. **Copy** — Artel copies the project into a fresh directory under your DSH home. `node_modules` is
+1. **Task chat** — pressing **Go** creates a chat titled `Artel · <task>` for the run: it joins the
+   project group in the sidebar, is read-only, and holds the run page. The source chat keeps no run and
+   no panel. Every agent chat (Solo, the Swarm team, the conductor and its workers, Fusion, the
+   Orchestrator crew) is filed under the same project group although each agent works in the run's copy;
+   Artel re-files those chats at every start, so a restart keeps the grouping. Old runs are not migrated.
+2. **Copy** — Artel copies the project into a fresh directory under your DSH home. `node_modules` is
    linked, not copied, so the agents can still run the project's checks. The real project is not
    touched. Orchestrator mode makes one copy per part instead of one copy for the run.
-2. **Agents** — one agent works in the copy in **Solo**; `swarmAgentCount` agents (three by default) share
+3. **Agents** — one agent works in the copy in **Solo**; `swarmAgentCount` agents (three by default) share
    one copy and one agent tree in **Swarm**, so they can message each other with
    `send_message`/`list_agents`. The first Swarm turn is planning only: the agents divide the files and
    announce who owns what. **Conductor** puts a lead on top of the same team: one conductor Session with
@@ -70,10 +76,10 @@ must run on the same machine.
    changed. The agents run unattended: Artel gives them the approval policy `never` and
    inherits the sandbox mode of the chat session (Fusion panels and judges are pinned to `read-only`), so
    a run never stalls on an approval prompt.
-3. **Diff** — when every agent goes idle, Artel stops the run and fills the **Changes** card on the run
+4. **Diff** — when every agent goes idle, Artel stops the run and fills the **Changes** card on the run
    page: every changed file with added and removed line counts and a line-by-line diff. In Orchestrator
    mode this happens after every part is accepted and the assembly is finished.
-4. **Apply** — you press **Apply** and confirm. It writes every changed file into the project. Before
+5. **Apply** — you press **Apply** and confirm. It writes every changed file into the project. Before
    writing, Artel checks each file against the state it had when the run started; a file you edited
    during the run is reported and the whole apply is refused, so nothing is half-written. **Discard**
    deletes the copy and changes nothing. After an apply, a project that declares a DSH bundle or its own
@@ -260,7 +266,8 @@ waits for (**Waiting for your answer**, **Waiting for plan approval**, **Waiting
 agents are working**, **Assembling the result**) and for how long, the **Right now** strip lists every
 agent with its last step, the time on the current turn and the fill of its context window, and a tag
 sums the tokens the run has spent. A tool call row with arguments or output is a button: it expands
-onto both, and **Collapse all** closes every open row.
+onto both, and **Collapse all** closes every open row. Every agent row also has a chat button, and so
+does the route bar under the header: they open that agent's own chat in the project group.
 
 The page is made of blocks, and you control them without leaving the run. The plan card, agent replies,
 tool groups, the **Parts** card, the **Changes** card and the **Queue** strip are all foldable — click a

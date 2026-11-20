@@ -4,26 +4,45 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.9.1] — 2026-11-21
+## [0.11.0] — 2026-11-21
+
+### Added
+
+- **Every run gets its own chat in the project (issue #10).** Starting a task from the Artel panel no
+  longer attaches the run to whatever chat happens to be open: the host creates a dedicated chat titled
+  `Artel · <task>` in the project's workspace (`sessionController.create({ workspaceId })`), pins it
+  read-only, binds the run to it and switches the client to it with the workspace's `openSession`. The
+  source chat keeps no run and no panel — an unrelated chat is never hijacked again. The new chat is
+  marked as started with an empty finished turn, so its title is visible in the sidebar at once and the
+  client cannot reuse it as the project's next New Session draft; `newChat: false` on `POST /runs` keeps
+  the old behavior for callers that already own a chat.
+- **Every agent chat is filed under the project in the sidebar (issue #10).** Agents still work only in
+  the isolated copy — the sandbox boundary does not move — but Artel now adds their sessions to the
+  project's workspace record (`Workspace.host.rememberSessionPath` + `Workspace.mutate`). The sidebar
+  keeps one project group with the task chat and all agents (Solo, Swarm, Conductor, Fusion, and the
+  Orchestrator planner, parts, reviewer and merger) instead of showing the copy folders as separate
+  projects. `engine.restoreProjectChats()` re-files these chats at every DSH start, so a restart keeps
+  the grouping; old runs are not migrated.
+- **Open the agent conversation from the run page.** The route bar under the header and the **Right now**
+  strip now carry a chat button next to every agent: it switches to that agent's chat
+  (`run.openSession`, defined since 0.8 but unused until now).
+- `lib/project-chats.js` — the host half of this: workspace lookup by real path, task-chat creation,
+  membership injection and the restart re-filing, all feature-detected (`HostDriver.supportsProjectChats()`);
+  a profile without a workspace registry keeps the previous grouping.
+
+### Changed
+
+- The Artel panel still opens from any chat, but the run page now lives in the run's task chat: the rail
+  in the source chat stays empty, the rail in the task chat lists the run.
+- The run record gains `taskChat`, `taskChatWorkspaceId` and `projectChats`; `run.sessionId` now names the
+  task chat. `POST /api/dsh-artel/runs` gained `newChat` (default `true`).
+- Queue runs keep the chat that owns the queue and Factory runs stay chatless, so background work does
+  not spawn chats.
 
 ### Fixed
 
-- **The auto-queue results card can no longer slide under the composer (issue #7).** Parts, changes and the
-  queue strip were direct flex children of the run column: under vertical pressure they shrank to zero
-  height while still painting their content outside themselves, so the green «Итоги автоочереди» card
-  ended up under the composer and past the panel bottom, and the only scroll region wrapped the feed, so
-  nothing could scroll it into view. The below-feed stack now lives inside the run column's scroll region
-  (`.dsh-artel-run__below`), the queue strip refuses to shrink (`flex: none`), the agent route and live
-  strips stay fixed above it, and the composer stays pinned below — so a short panel scrolls through the
-  parts, changes and results instead of hiding them.
-- **The results card collapses into its title row.** «Итоги автоочереди» is now a toggle with the entry
-  count; collapsing hides the rows and keeps the card at a 46px title, so a finished night shift does not
-  take half of a short panel.
-- **When a shift finishes the results card scrolls itself into view,** and the feed keeps auto-following
-  new messages only while its tail is actually on screen, so the two no longer fight over the bottom.
-- **The launch screen scrolls instead of clipping.** The hero was a centred flex column with no overflow:
-  a tall queue strip pushed the title above the panel top and the queue below the panel bottom. It now
-  scrolls, while auto margins keep the short layout centred.
+- A run started from the panel no longer shows up in an unrelated chat, and copy directories no longer
+  appear as separate sidebar projects (issue #10).
 
 ## [0.10.0] — 2026-11-21
 
@@ -55,6 +74,27 @@ All notable changes to this project are documented here. The format follows
   the queue strip was clipped to its first line. With folding, clamping and the block toolbar the feed
   keeps a usable viewport at any panel height, while the auto-queue results card (issue #7) still
   scrolls itself into view when a shift finishes.
+
+## [0.9.1] — 2026-11-21
+
+### Fixed
+
+- **The auto-queue results card can no longer slide under the composer (issue #7).** Parts, changes and the
+  queue strip were direct flex children of the run column: under vertical pressure they shrank to zero
+  height while still painting their content outside themselves, so the green «Итоги автоочереди» card
+  ended up under the composer and past the panel bottom, and the only scroll region wrapped the feed, so
+  nothing could scroll it into view. The below-feed stack now lives inside the run column's scroll region
+  (`.dsh-artel-run__below`), the queue strip refuses to shrink (`flex: none`), the agent route and live
+  strips stay fixed above it, and the composer stays pinned below — so a short panel scrolls through the
+  parts, changes and results instead of hiding them.
+- **The results card collapses into its title row.** «Итоги автоочереди» is now a toggle with the entry
+  count; collapsing hides the rows and keeps the card at a 46px title, so a finished night shift does not
+  take half of a short panel.
+- **When a shift finishes the results card scrolls itself into view,** and the feed keeps auto-following
+  new messages only while its tail is actually on screen, so the two no longer fight over the bottom.
+- **The launch screen scrolls instead of clipping.** The hero was a centred flex column with no overflow:
+  a tall queue strip pushed the title above the panel top and the queue below the panel bottom. It now
+  scrolls, while auto margins keep the short layout centred.
 
 ## [0.9.0] — 2026-11-21
 

@@ -2239,6 +2239,78 @@ test('a task started from a chat gets its own chat and the run moves there', asy
   }
 })
 
+test('peer modes start their agents from the source chat, not the read-only task chat', async () => {
+  for (const mode of ['swarm', 'conductor']) {
+    const f = await fixture(`task-chat-${mode}`)
+    try {
+      const run = await f.engine.start({
+        sessionId: 's1',
+        projectPath: f.projectPath,
+        mode,
+        task: 'Rework the demo app',
+        newChat: true,
+      })
+      assert.equal(run.sessionId, 'session-task-1', 'the run moves to the task chat')
+      assert.equal(f.driver.taskChats[0].sandboxMode, 'read-only', 'the task chat itself cannot write')
+      assert.equal(f.driver.created[0].parentSessionId, 's1', `the ${mode} lead inherits the sandbox of the chat the task came from`)
+      for (const member of f.driver.members) {
+        assert.equal(member.parentSessionId, f.driver.created[0].sessionId, 'the members live in the lead tree')
+      }
+    } finally {
+      await f.engine.dispose()
+      await f.cleanup()
+    }
+  }
+})
+
+test('fusion and orchestrator agents inherit the source chat, not the read-only task chat', async () => {
+  const models = {
+    panel: [
+      { provider: 'test', model: 'fast' },
+      { provider: 'test', model: 'slow' },
+      { provider: 'test', model: 'fast' },
+    ],
+    judge: { provider: 'test', model: 'slow' },
+    implementer: { provider: 'test', model: 'fast' },
+  }
+  const fusion = await fixture('task-chat-fusion')
+  try {
+    const run = await fusion.engine.start({
+      sessionId: 's1',
+      projectPath: fusion.projectPath,
+      mode: 'fusion',
+      task: 'Pick the approach for the answer change',
+      models,
+      newChat: true,
+    })
+    assert.equal(run.sessionId, 'session-task-1')
+    assert.deepEqual(fusion.driver.created.map((handle) => handle.parentSessionId), ['s1', 's1', 's1', 's1', 's1'])
+    assert.deepEqual(fusion.driver.created.map((handle) => handle.sandboxMode), ['read-only', 'read-only', 'read-only', 'read-only', undefined], 'only the panel and the judge stay read-only')
+  } finally {
+    await fusion.engine.dispose()
+    await fusion.cleanup()
+  }
+
+  const orch = await fixture('task-chat-orchestrator')
+  try {
+    const run = await orch.engine.start({
+      sessionId: 's1',
+      projectPath: orch.projectPath,
+      mode: 'orchestrator',
+      task: 'Rework the demo app',
+      newChat: true,
+    })
+    assert.equal(run.sessionId, 'session-task-1')
+    await runTurn(orch.driver, orch.driver.created[0], ORCH_PLAN)
+    assert.equal(orch.driver.created.length, 5, 'the planner, both workers and both reviewers exist')
+    assert.deepEqual(orch.driver.created.map((handle) => handle.parentSessionId), ['s1', 's1', 's1', 's1', 's1'])
+    assert.deepEqual(orch.driver.created.map((handle) => handle.sandboxMode), ['read-only', undefined, 'read-only', undefined, 'read-only'], 'the workers inherit the source chat, the reviewers stay read-only')
+  } finally {
+    await orch.engine.dispose()
+    await orch.cleanup()
+  }
+})
+
 test('the per-chat run cap counts task chats by the chat the task came from', async () => {
   const f = await fixture('task-chat-prune', { maxRunsPerSession: 1 })
   try {

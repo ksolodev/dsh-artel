@@ -38,7 +38,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node tools/build-locales.mjs --check && node --test test/*.test.js"
   },
   "keywords": [
     "dsh",

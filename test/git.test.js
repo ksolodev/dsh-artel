@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
-import { ArtelGit, GitError, MIN_GIT_VERSION, compareVersions, parseGitVersion, projectKey, repoDirFor, requireGit, worktreeRootFor } from '../lib/git.js'
+import { ArtelGit, GitError, MIN_GIT_VERSION, compareVersions, formatBytes, parseGitVersion, projectKey, repoDirFor, requireGit, worktreeRootFor } from '../lib/git.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -64,6 +64,21 @@ async function makeProject() {
   await fs.writeFile(path.join(dir, 'src', 'app.js'), 'export const answer = 1\n')
   await fs.writeFile(path.join(dir, 'README.md'), '# demo\n')
   return dir
+}
+
+async function makeGitProject() {
+  const dir = await makeProject()
+  await execFileAsync('git', ['init'], { cwd: dir })
+  await execFileAsync('git', ['config', 'user.email', 'user@example.com'], { cwd: dir })
+  await execFileAsync('git', ['config', 'user.name', 'User'], { cwd: dir })
+  await execFileAsync('git', ['add', '--all'], { cwd: dir })
+  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: dir })
+  return dir
+}
+
+function normalisePath(value) {
+  const resolved = path.resolve(value)
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved
 }
 
 test('init creates an app repo without touching the project', async () => {
@@ -302,4 +317,148 @@ test('cherryPick applies one commit and reports conflicts, quit clears state', a
   const conflicted = await git.cherryPick(conflictWork, branchCommit)
   assert.deepEqual(conflicted.conflicts, ['src/app.js'])
   await git.quitCherryPick(conflictWork)
+})
+
+async function projectHead(project) {
+  return (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: project })).stdout.trim()
+}
+
+async function projectStatus(project) {
+  return (await execFileAsync('git', ['status', '--porcelain'], { cwd: project })).stdout.trim()
+}
+
+async function userRef(project, name) {
+  const result = await execFileAsync('git', ['rev-parse', '--verify', '--quiet', `${name}^{commit}`], { cwd: project }).catch(() => null)
+  return result === null ? null : result.stdout.trim()
+}
+
+test('userRepoRoot finds the user work tree and creates nothing', async () => {
+  const stateDir = await tempDir('artel-state-')
+  const plain = await makeProject()
+  const plainGit = await ArtelGit.init({ stateDir, projectPath: plain })
+  assert.equal(await plainGit.userRepoRoot(), null)
+  assert.equal(await fs.stat(path.join(plain, '.git')).then(() => true).catch(() => false), false)
+
+  const project = await makeGitProject()
+  const git = await ArtelGit.init({ stateDir, projectPath: project })
+  const root = await git.userRepoRoot()
+  assert.notEqual(root, null)
+  assert.equal(normalisePath(root), normalisePath(project))
+  assert.equal(await projectStatus(project), '')
+})
+
+test('exportRefToUserRepo imports a branch without touching the user work tree', async () => {
+  const stateDir = await tempDir('artel-state-')
+  const project = await makeGitProject()
+  const git = await ArtelGit.init({ stateDir, projectPath: project })
+  const base = await git.importProject()
+
+  const branchWork = await git.materialize(path.join(await tempDir('artel-base-'), 'b1'), base)
+  await fs.writeFile(path.join(branchWork, 'README.md'), '# branch\n')
+  const branchCommit = await git.commitDir(branchWork, { parent: base, message: 'Task: branch readme' })
+  await git.updateRef('refs/heads/artel/b1', branchCommit, null)
+
+  const headBefore = await projectHead(project)
+  const statusBefore = await projectStatus(project)
+
+  const exported = await git.exportRefToUserRepo({ sourceRef: 'refs/heads/artel/b1', targetRef: 'refs/heads/artel/x' })
+  assert.deepEqual(exported, { target: 'refs/heads/artel/x', commit: branchCommit })
+  assert.equal(await userRef(project, 'refs/heads/artel/x'), branchCommit)
+  assert.equal(await projectHead(project), headBefore)
+  assert.equal(await projectStatus(project), statusBefore)
+  assert.equal(await git.ref('refs/heads/applied'), base)
+  assert.equal(await fs.stat(path.join(project, '.git', 'FETCH_HEAD')).then(() => true).catch(() => false), false)
+
+  const tipWork = await git.materialize(path.join(await tempDir('artel-base-'), 'b2'), branchCommit)
+  await fs.writeFile(path.join(tipWork, 'src', 'app.js'), 'export const answer = 2\n')
+  const tip = await git.commitDir(tipWork, { parent: branchCommit, message: 'Task: answer' })
+  await git.updateRef('refs/heads/artel/b1', tip, branchCommit)
+
+  const fastForwarded = await git.exportRefToUserRepo({ sourceRef: 'refs/heads/artel/b1', targetRef: 'refs/heads/artel/x' })
+  assert.deepEqual(fastForwarded, { target: 'refs/heads/artel/x', commit: tip })
+  assert.equal(await userRef(project, 'refs/heads/artel/x'), tip)
+
+  const userTree = (await execFileAsync('git', ['rev-parse', 'HEAD^{tree}'], { cwd: project })).stdout.trim()
+  const userCommit = (await execFileAsync('git', ['commit-tree', userTree, '-m', 'user work'], { cwd: project })).stdout.trim()
+  await execFileAsync('git', ['update-ref', 'refs/heads/artel/x', userCommit], { cwd: project })
+  const rejected = await git.exportRefToUserRepo({ sourceRef: 'refs/heads/artel/b1', targetRef: 'refs/heads/artel/x' }).catch((error) => error)
+  assert.ok(rejected instanceof GitError)
+  assert.equal(rejected.code, 'artel/export-exists')
+  assert.equal(await userRef(project, 'refs/heads/artel/x'), userCommit)
+  assert.equal(await projectHead(project), headBefore)
+  assert.equal(await projectStatus(project), statusBefore)
+})
+
+test('exportRefToUserRepo refuses non-git projects, bad targets and missing branches', async () => {
+  const plainState = await tempDir('artel-state-')
+  const plain = await makeProject()
+  const plainGit = await ArtelGit.init({ stateDir: plainState, projectPath: plain })
+  await plainGit.importProject()
+  const noRepo = await plainGit.exportRefToUserRepo({ sourceRef: 'refs/heads/applied', targetRef: 'refs/heads/artel/x' }).catch((error) => error)
+  assert.ok(noRepo instanceof GitError)
+  assert.equal(noRepo.code, 'artel/not-a-git-project')
+
+  const stateDir = await tempDir('artel-state-')
+  const project = await makeGitProject()
+  const git = await ArtelGit.init({ stateDir, projectPath: project })
+  await git.importProject()
+  for (const targetRef of ['refs/heads/main', 'refs/heads/artel/', 'refs/heads/artel/../main', 'refs/heads/artel/x.lock', 'refs/tags/artel/x', 'refs/heads/artel/x y']) {
+    const invalid = await git.exportRefToUserRepo({ sourceRef: 'refs/heads/applied', targetRef }).catch((error) => error)
+    assert.ok(invalid instanceof GitError)
+    assert.equal(invalid.code, 'artel/bad-request')
+  }
+  assert.equal(await userRef(project, 'refs/heads/artel/x'), null)
+
+  const missing = await git.exportRefToUserRepo({ sourceRef: 'refs/heads/artel/nope', targetRef: 'refs/heads/artel/x' }).catch((error) => error)
+  assert.ok(missing instanceof GitError)
+  assert.equal(missing.code, 'artel/export-missing')
+  assert.equal(await userRef(project, 'refs/heads/artel/x'), null)
+})
+
+test('commitTree writes a commit with the requested tree, parent and message', async () => {
+  const { git, base } = await repoFixture()
+
+  const root = await git.commitTree(base, { message: 'Revert apply' })
+  assert.notEqual(root, base)
+  assert.equal(await git.show(root, 'src/app.js'), 'export const answer = 1\n')
+  const rootLog = await git.log(root, { max: 1 })
+  assert.equal(rootLog[0].commit, root)
+  assert.deepEqual(rootLog[0].parents, [])
+  assert.equal(rootLog[0].subject, 'Revert apply')
+
+  const child = await git.commitTree(base, { parent: base, message: 'Child commit' })
+  const childLog = await git.log(child, { max: 1 })
+  assert.equal(childLog[0].commit, child)
+  assert.deepEqual(childLog[0].parents, [base])
+  assert.equal(childLog[0].subject, 'Child commit')
+  assert.equal(await git.show(child, 'README.md'), '# demo\n')
+  assert.equal(await git.head(), base)
+})
+
+test('formatBytes renders binary sizes with one decimal above KiB', () => {
+  assert.equal(formatBytes(0), '0 B')
+  assert.equal(formatBytes(1023), '1023 B')
+  assert.equal(formatBytes(1024), '1.0 KiB')
+  assert.equal(formatBytes(1536), '1.5 KiB')
+  assert.equal(formatBytes(2 * 1024 * 1024), '2.0 MiB')
+  assert.equal(formatBytes(1024 * 1024 * 1024), '1.0 GiB')
+})
+
+test('countObjects reports the repository size and gc runs', async () => {
+  const { git } = await repoFixture()
+  const before = await git.countObjects()
+  assert.equal(typeof before.objects, 'number')
+  assert.ok(before.objects > 0)
+  assert.equal(typeof before.sizeBytes, 'number')
+  assert.ok(before.sizeBytes >= 0)
+  assert.equal(before.sizeText, formatBytes(before.sizeBytes))
+  assert.match(before.sizeText, /^(?:\d+ B|\d+\.\d KiB|\d+\.\d MiB|\d+\.\d GiB)$/)
+
+  await git.gc()
+  const after = await git.countObjects()
+  assert.equal(typeof after.objects, 'number')
+  assert.ok(after.objects > 0)
+  await git.gc({ pruneNow: true })
+  await git.gcAuto()
+  assert.equal(typeof (await git.countObjects()).objects, 'number')
 })

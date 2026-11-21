@@ -2643,7 +2643,7 @@ test('all three dictionaries carry the auto-queue and factory strings', () => {
     assert.deepEqual(Object.keys(dictionaries[locale]).sort(), english, locale + ' has every English key')
   }
   const queueAndFactory = english.filter((key) => key.startsWith('queue.') || key.startsWith('factory.'))
-  assert.equal(queueAndFactory.length, 214, 'every queue and factory string is present')
+  assert.equal(queueAndFactory.length, 228, 'every queue and factory string is present')
   const expected = {
     en: {
       'queue.title': 'Waiting',
@@ -3178,6 +3178,147 @@ test('the branch apply dialog sends the checked commits and the drift confirmati
   assert.equal(posts.length, 2, 'the second click applies after confirming the drift')
   assert.equal(posts[1].confirmDrift, true)
   assert.deepEqual(posts[1].commitIds, ['1'.repeat(40), '3'.repeat(40)])
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('the branch panel exports, reverts, cleans up and reworks from the applied result', async () => {
+  const base = 'a'.repeat(40)
+  const appliedHead = 'b'.repeat(40)
+  const posts = { exported: [], reverted: [], maintained: [], created: [] }
+  let exported = null
+  let reverted = false
+  const makeQueue = () => ({
+    ...queueFixture(),
+    model: 'branches',
+    project: {
+      head: appliedHead,
+      repoDir: 'C:\\state\\repos\\key.git',
+      drift: { dirty: false, files: [] },
+      applied: { branchId: 'b-2', afterHead: appliedHead },
+    },
+    currentBranchId: 'b-1',
+    branches: [
+      { id: 'b-1', name: 'Ночная', ref: 'refs/heads/artel/b-1', baseCommit: base, tipCommit: 'c'.repeat(40) },
+      {
+        id: 'b-2',
+        name: 'Дневная',
+        ref: 'refs/heads/artel/b-2',
+        baseCommit: base,
+        tipCommit: appliedHead,
+        ...(reverted ? { revertedAt: '2026-11-21T06:00:00Z' } : { appliedAt: '2026-11-21T05:00:00Z' }),
+        ...(exported === null ? {} : { exported: { target: exported, at: '2026-11-21T06:00:00Z' } }),
+      },
+    ],
+    repo: { objects: 12, sizeBytes: 1258291, sizeText: '1.2 MiB' },
+  })
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [],
+      route: ({ method, pathname, body }) => {
+        const queue = makeQueue()
+        if (pathname === '/api/dsh-artel/queue' && method === 'GET') return reply(queue)
+        if (pathname === '/api/dsh-artel/queue/branches' && method === 'GET') {
+          return reply({ queue, project: queue.project, currentBranchId: 'b-1', branches: queue.branches, repo: queue.repo })
+        }
+        if (/^\/api\/dsh-artel\/queue\/branches\/[^/]+\/commits$/.test(pathname) && method === 'GET') return reply({ commits: [] })
+        if (pathname === '/api/dsh-artel/queue/branches/b-2/export' && method === 'POST') {
+          posts.exported.push(body)
+          exported = body.target ?? 'refs/heads/artel/b-2'
+          return reply({ queue: makeQueue() })
+        }
+        if (pathname === '/api/dsh-artel/queue/branches/b-2/revert' && method === 'POST') {
+          posts.reverted.push(body)
+          reverted = true
+          return reply({ queue: makeQueue() })
+        }
+        if (pathname === '/api/dsh-artel/queue/maintenance' && method === 'POST') {
+          posts.maintained.push(body)
+          return reply({ before: { objects: 12, sizeBytes: 1258291 }, after: { objects: 4, sizeBytes: 209715 }, freedBytes: 1048576 })
+        }
+        if (pathname === '/api/dsh-artel/queue/branches' && method === 'POST') {
+          posts.created.push(body)
+          return reply({ queue: makeQueue() })
+        }
+        if (pathname === '/api/dsh-artel/factory' && method === 'GET') return reply({ boards: [] })
+        return undefined
+      },
+    },
+  })
+  let opened = await openArtel(state)
+  const strip = findByClass(opened, 'dsh-artel-queue')
+  findAll(strip, (node) => node.type === 'button' && String(node.props.className).includes('dsh-artel-queue__branchChip'))[0].props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+  let modal = findByClass(opened, 'dsh-artel-branchModal')
+  assert.ok(modal !== undefined, 'the branch panel opens')
+  assert.match(textOf(modal), /Размер хранилища: 1\.2 MiB/, 'the footer shows the repository size')
+  const glyphs = findAll(modal, (node) => node.type === 'span' && String(node.props.className).includes('dsh-artel-branchModal__graph')).map((node) => textOf(node).trim())
+  assert.deepEqual(glyphs, ['●', '◇'], 'the graph marks the current branch and the applied tip')
+  assert.match(textOf(modal), /Основа aaaaaaa/, 'the branch row shows the short base commit')
+  assert.match(textOf(modal), /bbbbbbb/, 'the branch row shows the short tip commit')
+
+  findButton(modal, 'Дневная').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+  await state.realm.settle()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+  modal = findByClass(opened, 'dsh-artel-branchModal')
+  assert.ok(findButton(modal, 'Экспортировать в git') !== undefined, 'the selected branch can be exported')
+  assert.ok(findButton(modal, 'Отменить применение') !== undefined, 'the applied branch can be reverted')
+  assert.ok(findButton(modal, 'Доработать с этого результата') !== undefined, 'the applied result can be reworked')
+
+  findButton(modal, 'Экспортировать в git').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+  modal = findByClass(opened, 'dsh-artel-branchModal')
+  assert.equal(posts.exported.length, 1, 'the export reached the Host')
+  assert.deepEqual(posts.exported[0], { sessionId: 'sess-1' }, 'an empty target means automatic')
+  assert.match(textOf(modal), /Экспортировано в: refs\/heads\/artel\/b-2/, 'the panel names the exported ref')
+
+  const targetInput = findAll(modal, (node) => node.type === 'input' && String(node.props.className).includes('dsh-artel-branchModal__target'))[0]
+  assert.ok(targetInput !== undefined, 'the export target input is in the panel')
+  targetInput.props.onChange({ target: { value: 'refs/heads/artel/custom' } })
+  opened = await state.realm.renderer.flush()
+  modal = findByClass(opened, 'dsh-artel-branchModal')
+  findButton(modal, 'Экспортировать в git').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+  modal = findByClass(opened, 'dsh-artel-branchModal')
+  assert.equal(posts.exported.length, 2, 'the custom export reached the Host')
+  assert.deepEqual(posts.exported[1], { sessionId: 'sess-1', target: 'refs/heads/artel/custom' }, 'the typed target travels')
+  assert.match(textOf(modal), /Экспортировано в: refs\/heads\/artel\/custom/)
+
+  findButton(modal, 'Отменить применение').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+  modal = findByClass(opened, 'dsh-artel-branchModal')
+  assert.equal(posts.reverted.length, 1, 'the revert reached the Host')
+  assert.deepEqual(posts.reverted[0], { sessionId: 'sess-1' })
+  assert.match(textOf(modal), /отменена/, 'the reverted branch is marked')
+
+  findButton(modal, 'Почистить').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+  modal = findByClass(opened, 'dsh-artel-branchModal')
+  assert.equal(posts.maintained.length, 1, 'the cleanup reached the Host')
+  assert.deepEqual(posts.maintained[0], { sessionId: 'sess-1' })
+  assert.match(textOf(modal), /Хранилище почищено: 1 MB/, 'the footer reports the freed bytes')
+
+  findButton(modal, 'Доработать с этого результата').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  opened = await state.realm.renderer.flush()
+  assert.equal(posts.created.length, 1, 'the rework branch reached the Host')
+  assert.equal(posts.created[0].fromCommit, appliedHead, 'the rework starts at the applied head')
+  assert.equal(posts.created[0].switchTo, true, 'the rework switches to the new branch')
   state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
 })
 

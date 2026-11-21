@@ -595,7 +595,11 @@ test('importGithubIssue names the reason a gh lookup failed', async () => {
     const boardId = created.board.id
     await assert.rejects(
       () => f.runner.importGithubIssue(boardId, 'nonsense'),
-      (error) => error instanceof FactoryError && error.status === 400 && error.code === 'factory/bad-issue-ref',
+      (error) => error instanceof FactoryError
+        && error.status === 400
+        && error.code === 'factory/bad-issue-ref'
+        && error.key === 'factory.error.bad-issue-ref'
+        && error.params !== null,
     )
 
     const cases = [
@@ -612,10 +616,18 @@ test('importGithubIssue names the reason a gh lookup failed', async () => {
       f.execState.issueError = stderr
       await assert.rejects(
         () => f.runner.importGithubIssue(boardId, '#12'),
-        (error) => error instanceof FactoryError && error.code === code,
+        (error) => error instanceof FactoryError && error.code === code && typeof error.key === 'string' && error.key.startsWith('factory.error.'),
         stderr,
       )
     }
+    f.execState.issueError = 'Could not resolve to an issue or pull request with the number of 12.'
+    await assert.rejects(
+      () => f.runner.importGithubIssue(boardId, '#12'),
+      (error) => error instanceof FactoryError
+        && error.code === 'factory/issue-not-found'
+        && error.key === 'factory.error.issue-not-found'
+        && error.params.ref === '#12',
+    )
     assert.ok(f.execState.calls.some((call) => call.command === 'gh' && call.args[0] === 'issue' && call.args.includes('12')))
   } finally {
     await f.cleanup()
@@ -747,6 +759,8 @@ test('triage questions wait for the user and the answers send the ticket back', 
     await settleRun(f, triage, 'SPEC: Add a settings screen.\nQUESTION: Which theme should the settings screen use?')
     const waiting = await waitTicket(f, boardId, ticketId, (ticket) => ticket.waiting?.kind === 'triage-questions')
     assert.equal(waiting.stage, 'waiting')
+    assert.equal(waiting.waiting.reasonKey, 'factory.waiting.triage-questions')
+    assert.deepEqual(waiting.waiting.reasonParams, { count: 1 })
     assert.match(waiting.waiting.questions[0], /Which theme/)
 
     const answered = await f.runner.answerQuestions(boardId, ticketId, { answers: ['Dark theme'] })

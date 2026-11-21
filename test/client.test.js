@@ -2662,7 +2662,7 @@ test('all three dictionaries carry the auto-queue and factory strings', () => {
     assert.deepEqual(Object.keys(dictionaries[locale]).sort(), english, locale + ' has every English key')
   }
   const queueAndFactory = english.filter((key) => key.startsWith('queue.') || key.startsWith('factory.'))
-  assert.equal(queueAndFactory.length, 301, 'every queue and factory string is present')
+  assert.equal(queueAndFactory.length, 418, 'every queue and factory string is present')
   const expected = {
     en: {
       'queue.title': 'Waiting',
@@ -2675,7 +2675,13 @@ test('all three dictionaries carry the auto-queue and factory strings', () => {
       'queue.reason.login-lost': 'Could not continue: the engine is not authorized.',
       'factory.title': 'Factory',
       'factory.column.checks': 'Checks',
-      'factory.waiting.triageQuestions': 'Triage has questions',
+      'factory.column.review': 'Review',
+      'factory.mode.orchestrator': 'Orchestrator',
+      'factory.repair.rounds': 'Repair round {round} of {total}',
+      'factory.waiting.triage-questions': 'Triage has questions',
+      'factory.waiting.version-gone': 'The ticket version is no longer available.',
+      'factory.event.ticket-added': 'Incoming: #{number} {title}',
+      'factory.error.duplicate-ticket': 'This ticket is already open: #{number}.',
       'factory.template.fast': 'Fast',
     },
     ru: {
@@ -2692,10 +2698,14 @@ test('all three dictionaries carry the auto-queue and factory strings', () => {
       'factory.title': 'Фабрика',
       'factory.column.incoming': 'Входящие',
       'factory.column.working': 'Работа',
+      'factory.column.tests': 'Тесты',
       'factory.column.checks': 'Проверки',
       'factory.column.ready': 'Готово к PR',
       'factory.column.waiting': 'Ждёт вас',
-      'factory.waiting.repairExhausted': 'Круги починки кончились',
+      'factory.mode.solo': 'Соло',
+      'factory.repair.rounds': 'Круг починки {round} из {total}',
+      'factory.waiting.repair-exhausted': 'Круги починки кончились',
+      'factory.event.waiting.plan': 'Ждёт вас: согласование плана.',
       'factory.spec': 'Спецификация',
       'factory.criteria': 'Критерии',
     },
@@ -2708,6 +2718,10 @@ test('all three dictionaries carry the auto-queue and factory strings', () => {
       'queue.event.started': '任务「{title}」已开始',
       'factory.title': '工厂',
       'factory.column.checks': '检查',
+      'factory.column.review': '评审',
+      'factory.mode.fusion': '融合',
+      'factory.repair.rounds': '修复轮次 {round}/{total}',
+      'factory.error.unknown-ticket': '未找到工单。',
     },
   }
   for (const locale of Object.keys(expected)) {

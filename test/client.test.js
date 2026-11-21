@@ -496,6 +496,7 @@ function createRealm(options = {}) {
 
   const document = {
     baseURI: 'http://127.0.0.1:61327/',
+    documentElement: { lang: 'ru' },
     getElementById(id) {
       return styleElements.find((element) => element.id === id) ?? null
     },
@@ -586,6 +587,20 @@ function createRealm(options = {}) {
     // Issue #13: the panel reads the git verdict once when it opens.
     if (pathname === '/api/dsh-artel/health') {
       return json({ ok: true, version: '0.1.0', git: scenario.git ?? { ok: true, version: '2.43.0', minimum: '2.30.0', reason: null } })
+    }
+    if (pathname === '/api/dsh-artel/settings' && method === 'GET') {
+      return json(scenario.settings ?? {
+        language: null,
+        available: [
+          { id: 'en', nativeName: 'English' },
+          { id: 'ru', nativeName: 'Русский' },
+          { id: 'zh', nativeName: '中文' },
+        ],
+      })
+    }
+    if (pathname === '/api/dsh-artel/settings' && method === 'POST') {
+      scenario.settings = { language: body?.language ?? null, available: scenario.settings?.available ?? [] }
+      return json(scenario.settings)
     }
     // Issue #11: the project-chat index used by the rail block and the badge.
     if (pathname === '/api/dsh-artel/chats') return json({ chats: scenario.chats ?? [] })
@@ -2684,6 +2699,37 @@ test('all three dictionaries carry the auto-queue and factory strings', () => {
       assert.equal(dictionaries[locale][key], expected[locale][key], locale + ' has ' + key)
     }
   }
+})
+
+test('a loaded language store follows the DSH language and switches instantly', async () => {
+  const state = setup({ locale: 'ru' })
+  const debug = state.realm.window.__DSH_ARTEL_DEBUG__
+  state.realm.document.documentElement = { lang: 'ru' }
+  await debug.language.init()
+  assert.equal(debug.language.get().effective, 'ru')
+  assert.equal(debug.language.t('surface.title'), 'Артель')
+
+  await debug.language.set('en')
+  assert.equal(debug.language.get().effective, 'en')
+  assert.equal(debug.language.t('surface.title'), 'Artel')
+})
+
+test('an unknown language falls back to the base language and then to English', async () => {
+  const state = setup({ locale: 'ru' })
+  const debug = state.realm.window.__DSH_ARTEL_DEBUG__
+  state.realm.document.documentElement = { lang: 'ru-RU' }
+  await debug.language.init()
+  assert.equal(debug.language.get().effective, 'ru')
+  state.realm.document.documentElement = { lang: 'de-DE' }
+  await debug.language.set(null)
+  assert.equal(debug.language.get().effective, 'en')
+})
+
+test('localized prefers a host key over legacy text', () => {
+  const state = setup({ locale: 'en' })
+  const debug = state.realm.window.__DSH_ARTEL_DEBUG__
+  const t = (key, params) => (key === 'feed.copy.preparing' ? `Preparing ${params.project}` : 'legacy')
+  assert.equal(debug.localized(t, { key: 'feed.copy.preparing', params: { project: 'app' }, text: 'legacy' }), 'Preparing app')
 })
 
 test('queue and factory view-model helpers are exposed on the debug bridge', () => {

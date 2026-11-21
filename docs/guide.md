@@ -5,18 +5,18 @@
 Artel runs a development task in an isolated copy of the project that the current chat session works
 in: it shows the work as it happens and moves the result into your project only when you ask.
 
-Artel opens from the chat itself. The **Артель** chip — the Artel mark and the name on the violet brand
+Artel opens from the chat itself. The **Artel** chip — the Artel mark and the name on the violet brand
 surface — sits in the composer tool row, next to "+"; a narrow row keeps only the mark. It lays a panel
 (overlay) over the current chat; the chat stays underneath. The panel shows the runs of the session it
 is opened in: a run started here gets its own task chat, and the run page lives there (see **Task chats
 and project chats**). The session's working directory is the project.
 
-![The Artel panel: the session rail and the new-run form](artel-in-chat/screens/hero.png)
+![The Artel panel: the session rail and the new-run form](artel-in-chat/screens/en/hero.png)
 
 ## Open Artel
 
 1. Open a chat whose working directory contains the project.
-2. Click the **Артель** chip in the tool row under the chat composer (next to **+**). While a run in this
+2. Click the **Artel** chip in the tool row under the chat composer (next to **+**). While a run in this
    session is active, the chip shows an amber dot in its corner.
 3. The panel covers the chat area. To get back to the chat, use **Chat** in the panel header or
    press Esc. Closing the panel does not stop the run: the agents keep working, and the next time
@@ -56,20 +56,19 @@ text appears under the button.
 ## Model and reasoning effort
 
 The new-run form also picks the route. **Model** groups every provider the profile advertises and the
-models it offers; **Effort** offers the reasoning efforts that model reports, with **Auto** meaning
-the adapter default. Artel starts every agent of the run on that route. Without a choice the agents
+models it offers; **Reasoning** offers the reasoning efforts that model reports, with **Adapter default** leaving the choice to the adapter. Artel starts every agent of the run on that route. Without a choice the agents
 use the profile default model.
 
 On the run page the route bar under the header lists the agents with their own **model** and
-**effort** pickers, so one member can plan on a cheap model and edit with a strong one. Changing a
+**reasoning** pickers, so one member can plan on a cheap model and edit with a strong one. Changing a
 row reroutes that agent only, from its next step — the step already running keeps the route it
 started with. The bar is read-only once the run has been applied or discarded. If the Host cannot
 reach an agent, the row keeps the profile default and the feed shows a warning instead of failing
 the run. A chat button at the end of every row opens that agent's conversation.
 
 In **Fusion** the form replaces the single route chip with five slots — **Panel 1**, **Panel 2**,
-**Panel 3**, **Judge** and **Implementer** — each with its own model and effort picker (the effort
-picker appears when the chosen model offers efforts). The panel starts on distinct catalog rows when
+**Panel 3**, **Judge** and **Implementer** — each with its own model and reasoning picker (the reasoning
+picker appears when the chosen model offers reasoning efforts). The panel starts on distinct catalog rows when
 the profile advertises several models; the judge and the implementer start on the profile default. The
 five routes can still be changed on the run page while the run is alive, before that agent's turn.
 
@@ -298,17 +297,17 @@ or is parked. The queue keeps its history in a git repository of its own under `
 project's `.git` is never touched and a non-git project works the same way (the machine still needs git
 `2.30.0` or newer, like the Factory); the next task starts from the
 branch tip, and each task's change is its own small commit, not the whole night. The queue head shows the
-current branch, and **Все ветки** opens the branch modal — the graph, the commits with their diffs, and the
-apply and merge dialogs. **Применить ветку** applies the whole branch in one action; unticking a commit
+current branch, and **All branches** opens the branch modal — the graph, the commits with their diffs, and the
+apply and merge dialogs. **Apply branch** applies the whole branch in one action; unticking a commit
 rebuilds the remaining ones on the current applied state, uncommitted project changes become an explicit drift
 commit, and branches merge like git branches (`--no-ff`, a fixer agent resolving textual conflicts). When the
-project itself is a git work tree, **Экспортировать в git** imports a branch into it as
+project itself is a git work tree, **Export to git** imports a branch into it as
 `refs/heads/artel/<branch-id>`: only the ref and its objects are written, the work tree and `HEAD` stay
-untouched, and an update that is not a fast-forward is refused instead of forced. **Отменить применение**
+untouched, and an update that is not a fast-forward is refused instead of forced. **Revert the apply**
 undoes the last applied branch as a new commit with the inverse changes — history only grows, and it refuses a
 project with uncommitted changes or an apply that is no longer the last one. The same modal shows the queue
-repository's size next to **Почистить**, a full `git gc` that reports the bytes freed, and **Доработать с
-этого результата** starts a new branch from the applied state. A queue with more than one branch also lets
+repository's size next to **Clean up**, a full `git gc` that reports the bytes freed, and **Rework from
+this result** starts a new branch from the applied state. A queue with more than one branch also lets
 each task pick its branch in the add row.
 
 **Parked** collects the tasks that cannot pass unattended: the check failed after two fixes, the diff
@@ -413,7 +412,7 @@ percent, with the composition (system, tools, messages) in the tooltip. The chat
 the row opens that agent's conversation. All of it is part of the run
 summary the Host already sends, so it costs no extra request.
 
-![The run page: agent replies and grouped tool calls](artel-in-chat/screens/run.png)
+![The run page: agent replies and grouped tool calls](artel-in-chat/screens/en/run.png)
 
 While a run is active the header has a **Stop** button. It asks for confirmation: "Stop this Artel
 run?" with **Stop run** and **Keep working** (and "Stopping…" while the request is in flight). A
@@ -445,19 +444,19 @@ while it loads, "Loading the feed…".
 
 The run page is a column of blocks: the **Plan** card, agent replies, grouped tool calls, the **Parts**
 card, the **Changes** card and the **Queue** strip. Every block header is a button: click it to fold the
-block to one line with a short count — «ПЛАН · 24 строки», «Олег · 6 строк», «Инструментов: 4» — and
-click again to unfold it. The **Блоки** toolbar above the feed keeps the whole page in hand:
+block to one line with a short count — «PLAN · 24 lines», «Vega · 6 lines», «4 tool calls» — and
+click again to unfold it. The **Blocks** toolbar above the feed keeps the whole page in hand:
 
-- a chip hides or brings back one kind of block — **План**, **Агенты**, **Инструменты**, **Части**,
-  **Изменения**, **Очередь**;
-- **Компактно** folds every block at once, and **Свернуть все** / **Развернуть все** fold or unfold the
+- a chip hides or brings back one kind of block — **Plan**, **Agents**, **Tools**, **Parts**,
+  **Changes**, **Queue**;
+- **Compact** folds every block at once, and **Fold all** / **Unfold all** fold or unfold the
   whole page in one click;
 - the folds, the hidden kinds and the compact switch are remembered per chat session in the browser
   (`localStorage`, key `dsh-artel:blocks:<session id>`), so a reload keeps the page as you left it.
 
 A long block is clamped to a comfortable height (40vh for the plan and replies, 36vh for the changes
-card, 32vh for the queue strip by default), scrolls inside that frame and offers **Показать целиком** /
-**Свернуть**; the grip on a block's bottom edge drags its height, and so does the handle above the
+card, 32vh for the queue strip by default), scrolls inside that frame and offers **Show all** /
+**Show less**; the grip on a block's bottom edge drags its height, and so does the handle above the
 composer for the write field. The feed, the parts card, the changes card and the queue strip share one
 scroll region, so the composer never covers them and nothing is painted over the feed (issue #8).
 
@@ -486,7 +485,7 @@ expanded. The card header has **Refresh changes** and a fold toggle (**Show chan
 changes**); the fold is remembered per session like every other block, and the card's bottom edge can
 be dragged to give the file list more room (see **Blocks: fold, hide and resize**).
 
-![The Changes card with a file diff open](artel-in-chat/screens/changes.png)
+![The Changes card with a file diff open](artel-in-chat/screens/en/changes.png)
 
 - **Apply** first asks for confirmation: "Apply these changes?" and "The changes will be written to
   <project>. The isolated copy will be deleted.", with **Apply** and **Cancel**. It writes every
@@ -535,6 +534,18 @@ Step results stay on the card when you refresh it: a step whose command did not 
 result, a changed command starts from idle again. Nothing is installed and no command runs without your
 click, and a project without a bundle or install steps shows no install block at all.
 
+## Interface language
+
+The panel is localised: the globe button in the panel header, next to the **Chat** and **Artel** tabs,
+lists **English**, **Русский** and **中文**, plus **Auto (follow DSH)** — the mode that follows the DSH
+language and names it on the button (for example "Auto (Русский)"). The choice applies to the open panel
+at once and is stored per DSH profile in `settings.json` under `stateDir`, so every chat of the profile
+uses the same language. Mode names (Solo, Swarm, Conductor, Fusion, Orchestrator), statuses, file paths
+and everything the agents write stay as they are. The strings live in `locale/*.json` and are compiled
+into the client, so a new language is a catalogue file, not code — see [translating.md](translating.md).
+This guide ships in the same three languages: the switch at the top of every page opens the guide in the
+other language.
+
 ## Where the data lives
 
 - Copies: `<DSH home>/artel/<profile>/copies/<run id>` — deleted when the run is applied or discarded; a
@@ -550,6 +561,8 @@ click, and a project without a bundle or install steps shows no install block at
   project as its working directory (read-only) and one chat per agent with the run's copy as its
   working directory. Their place in the sidebar project group is kept in
   `<DSH home>/storages/workspace.json` (the Host workspace) and re-filed by Artel at every start.
+- Interface language of the profile: `<DSH home>/artel/<profile>/state/settings.json` — `null` follows
+  the DSH language; the globe button in the panel header writes it.
 
 Artel keeps at most `maxRunsPerSession` runs per session: the oldest finished runs (applied,
 discarded, stopped, failed) are dropped from the list together with their copies. Runs still waiting

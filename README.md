@@ -18,7 +18,7 @@ left, and either the new-run form or the live run on the right. The chat session
 the project; Artel never touches it until you apply. A run started from the panel gets its own chat,
 titled `Artel · <task>`, under the project in the sidebar, so the chat you started from stays clean.
 
-![Artel opens over the chat](docs/artel-in-chat/screens/hero.png)
+![Artel opens over the chat](docs/artel-in-chat/screens/en/hero.png)
 
 ## Install
 
@@ -189,17 +189,17 @@ worker for a fix, at most twice; a task that still fails is parked. Every queue 
 under `stateDir/repos/`, so the project's own `.git` is never touched and a non-git project works the same way
 (the git binary is required, the project's repository is not);
 the next task starts from the branch tip, and each task's change is its own small commit rather than the whole
-night. The queue head shows the current branch, and **Все ветки** opens the branch modal: the graph, the
-commits with their diffs, and the apply and merge dialogs. **Применить ветку** applies the whole branch in one
+night. The queue head shows the current branch, and **All branches** opens the branch modal: the graph, the
+commits with their diffs, and the apply and merge dialogs. **Apply branch** applies the whole branch in one
 action; unticking a commit rebuilds the remaining ones on the current applied state. Uncommitted project
 changes are detected before an apply and become an explicit drift commit instead of being silently overwritten,
 and branches merge like git branches (`--no-ff`, with a fixer agent resolving textual conflicts). When the
-project itself is a git work tree, **Экспортировать в git** imports a branch into it as
+project itself is a git work tree, **Export to git** imports a branch into it as
 `refs/heads/artel/<branch-id>` — only the ref and its objects, leaving the work tree and `HEAD` alone and
-refusing non-fast-forward updates instead of forcing them. **Отменить применение** undoes the last applied
+refusing non-fast-forward updates instead of forcing them. **Revert the apply** undoes the last applied
 branch as a new commit with the inverse changes, so history only grows; it refuses a project with uncommitted
 changes or an apply that is no longer the last one. The modal shows the queue repository's size next to
-**Почистить**, which runs a full `git gc` and reports the bytes freed, and **Доработать с этого результата**
+**Clean up**, which runs a full `git gc` and reports the bytes freed, and **Rework from this result**
 starts a new branch from the applied state.
 
 **Parked** is where tasks go when they cannot pass unattended: the check still fails after two fixes, the
@@ -288,15 +288,15 @@ does the route bar under the header: they open that agent's own chat in the proj
 
 The page is made of blocks, and you control them without leaving the run. The plan card, agent replies,
 tool groups, the **Parts** card, the **Changes** card and the **Queue** strip are all foldable — click a
-header to fold it to one line («ПЛАН · 24 строки», «Олег · 6 строк»), and the fold is remembered per
-chat session, even after a reload. The **Блоки** toolbar above the feed hides a kind of block, folds
-everything (**Свернуть все**), unfolds it back, or switches the whole page to **Компактно**; a long block
-is clamped to a comfortable height with **Показать целиком** and a grip on its bottom edge to resize it,
+header to fold it to one line («PLAN · 24 lines», «Vega · 6 lines»), and the fold is remembered per
+chat session, even after a reload. The **Blocks** toolbar above the feed hides a kind of block, folds
+everything (**Fold all** / **Unfold all**), or switches the whole page to **Compact**; a long block
+is clamped to a comfortable height with **Show all** and a grip on its bottom edge to resize it,
 and the boundary above the composer can be dragged too. Nothing overlaps: parts, changes and the queue
 live in the same scroll as the feed, the composer stays pinned below it, and the auto-queue results card
 still scrolls itself into view when a shift finishes (issue #8).
 
-![The run page](docs/artel-in-chat/screens/run.png)
+![The run page](docs/artel-in-chat/screens/en/run.png)
 
 When every agent is idle, Artel stops and waits for you:
 
@@ -306,7 +306,7 @@ When every agent is idle, Artel stops and waits for you:
   discard and run again.
 - **Discard** asks for confirmation, deletes the copy and changes nothing.
 
-![The Changes card](docs/artel-in-chat/screens/changes.png)
+![The Changes card](docs/artel-in-chat/screens/en/changes.png)
 
 An applied project can be something DSH itself has to pick up — a bundle or a plugin with its own
 installer. For those, the changes card keeps a second block open after **Apply**, and nothing in it
@@ -343,6 +343,18 @@ agents and every Orchestrator agent are ordinary sessions as well: the planner i
 `Artel · Orchestrator · <agent> — <task>`, a part agent gets `Artel · Part N — <title> · <agent> — <task>`,
 its reviewer `Artel · Review · Part N — <title> · <agent> — <task>` and the merger `Artel · Merge · <agent> —
 <task>` (Fusion adds `Fusion · <role>`). Archive or delete those sessions when you no longer need them.
+
+## Interface language
+
+The panel comes in English, Russian and Chinese. The language button in the panel header — a globe next
+to the **Chat** and **Artel** tabs — lists **English**, **Русский** and **中文**, plus **Auto**, which
+follows the interface language of DeepSeek Harness itself (the button names the language it follows).
+The choice applies to the open panel at once and is stored per DSH profile in `settings.json` under
+`stateDir`, so every chat of the profile speaks the same language. Mode names (Solo, Swarm, Conductor,
+Fusion, Orchestrator), statuses, file paths and everything the agents write stay as they are; the
+catalogues behind the strings live in `locale/*.json` and are compiled into the client, so adding a
+language needs no code change — see [docs/translating.md](docs/translating.md). These docs ship in the
+same three languages: the switch at the top of this page opens the README and guide in another language.
 
 ## Upgrading from `dsh-forge`
 
@@ -454,7 +466,8 @@ independent-session fallback.
 Run records and feeds are plain JSON and JSONL files under `stateDir`. A session's auto-queue and a
 project's Factory boards are plain JSON there too (`queue/` and `tickets/`), and ticket attachments are
 ordinary files under `attachments/`. The queue's own git repositories live under `repos/` beside them, with
-scratch worktrees under `worktrees/`. Agent conversations are ordinary DSH sessions and stay in your
+scratch worktrees under `worktrees/`. The interface language of the profile is stored in `settings.json`
+there. Agent conversations are ordinary DSH sessions and stay in your
 session store. The plugin's host half talks to the client over
 a loopback-only HTTP API; every request is checked for a local socket, a local Host header and a
 same-origin origin.
@@ -462,14 +475,18 @@ same-origin origin.
 ## Development
 
 ```sh
-node --test test/*.test.js
+npm test
 ```
 
-No build step: the host half is plain ESM (`lib/*.js`) and the client half is hand-written
-`React.createElement` (`lib/client.js`). CI runs the suite on Ubuntu and Windows with Node 22 and 24.
+`npm test` runs `node --test test/*.test.js` after checking that the compiled locale block in
+`lib/client.js` is current (`node tools/build-locales.mjs --check`). The host half is plain ESM
+(`lib/*.js`); the client half is hand-written `React.createElement` (`lib/client.js`); the user-visible
+strings live in `locale/*.json` and are compiled into the client by `node tools/build-locales.mjs`.
+CI runs the suite on Windows with Node 22 and 24.
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — host/client design, the run and data model, the route surface.
 - [docs/publishing.md](docs/publishing.md) — how a release is packed, published and listed.
+- [docs/translating.md](docs/translating.md) — interface languages, the catalogues, adding a language.
 - [docs/guide.md](docs/guide.md), [docs/guide.ru.md](docs/guide.ru.md),
   [docs/guide.zh.md](docs/guide.zh.md) — the user guide (en / ru / zh).
 - [CHANGELOG.md](CHANGELOG.md) — release notes.

@@ -2643,7 +2643,7 @@ test('all three dictionaries carry the auto-queue and factory strings', () => {
     assert.deepEqual(Object.keys(dictionaries[locale]).sort(), english, locale + ' has every English key')
   }
   const queueAndFactory = english.filter((key) => key.startsWith('queue.') || key.startsWith('factory.'))
-  assert.equal(queueAndFactory.length, 213, 'every queue and factory string is present')
+  assert.equal(queueAndFactory.length, 214, 'every queue and factory string is present')
   const expected = {
     en: {
       'queue.title': 'Waiting',
@@ -2899,6 +2899,154 @@ test('branch actions load branch state and keep error details for the panel', as
   assert.deepEqual(store.getSnapshot().queueBranchError.details.drift.files, ['src/app.js'])
   assert.match(store.getSnapshot().queueBranchError.text, /uncommitted changes/)
   store.dispose()
+})
+
+test('the store exports, reverts and maintains queue branches', async () => {
+  const base = 'a'.repeat(40)
+  const branches = [
+    { id: 'b-1', name: 'One', ref: 'refs/heads/artel/b-1', baseCommit: base, tipCommit: 'c'.repeat(40) },
+    { id: 'b-2', name: 'Two', ref: 'refs/heads/artel/b-2', baseCommit: base, tipCommit: null },
+  ]
+  const branchQueue = {
+    ...queueFixture(),
+    model: 'branches',
+    project: { head: base, repoDir: 'C:\\state\\repos\\key.git', drift: { dirty: false, files: [] } },
+    currentBranchId: 'b-1',
+    branches,
+  }
+  const branchState = { queue: branchQueue, project: branchQueue.project, currentBranchId: 'b-1', branches }
+  const maintenance = {
+    before: { objects: 4, sizeBytes: 8192, sizeText: '8 KB' },
+    after: { objects: 2, sizeBytes: 4096, sizeText: '4 KB' },
+    freedBytes: 4096,
+  }
+  const posted = []
+  let branchLoads = 0
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [],
+      route: ({ method, pathname, body }) => {
+        if (pathname === '/api/dsh-artel/queue' && method === 'GET') return reply(branchQueue)
+        if (pathname === '/api/dsh-artel/queue' && method === 'POST') {
+          posted.push({ kind: 'add', body })
+          return reply({ queue: branchQueue, added: 1 })
+        }
+        if (pathname === '/api/dsh-artel/queue/branches' && method === 'GET') {
+          branchLoads += 1
+          return reply(branchState)
+        }
+        if (pathname === '/api/dsh-artel/queue/branches/b-1/export' && method === 'POST') {
+          posted.push({ kind: 'export', body })
+          return reply({ queue: branchQueue, exported: { target: body.target ?? 'refs/heads/artel/b-1', commit: 'c'.repeat(40), at: 1 } })
+        }
+        if (pathname === '/api/dsh-artel/queue/branches/b-1/revert' && method === 'POST') {
+          posted.push({ kind: 'revert', body })
+          return reply({ queue: branchQueue, reverted: { branchId: 'b-1', branchName: 'One', commit: 'd'.repeat(40), undone: 'c'.repeat(40) } })
+        }
+        if (pathname === '/api/dsh-artel/queue/maintenance' && method === 'POST') {
+          posted.push({ kind: 'maintenance', body })
+          return reply(maintenance)
+        }
+        if (pathname === '/api/dsh-artel/factory' && method === 'GET') return reply({ boards: [] })
+        return undefined
+      },
+    },
+  })
+  await openArtel(state)
+  const store = state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1')
+  assert.equal(store.getSnapshot().branchMaintenance, null, 'maintenance stats start empty')
+
+  assert.equal(await store.addQueueTasks({ task: 'Проверь ветку', branchId: 'b-2' }), 1)
+  const withBranch = posted.filter((entry) => entry.kind === 'add')
+  assert.equal(withBranch.length, 1)
+  assert.equal(withBranch[0].body.branchId, 'b-2', 'the chosen branch travels with the task')
+
+  await store.addQueueTasks({ task: 'Без ветки' })
+  const withoutBranch = posted.filter((entry) => entry.kind === 'add')[1]
+  assert.equal(Object.prototype.hasOwnProperty.call(withoutBranch.body, 'branchId'), false, 'the current branch adds no branchId key')
+
+  const loadsBeforeExport = branchLoads
+  const exported = await store.exportBranch('b-1')
+  assert.deepEqual(posted.find((entry) => entry.kind === 'export').body, { sessionId: 'sess-1' }, 'export without a target sends only the session')
+  assert.ok(exported?.exported !== undefined, 'export returns the host payload')
+  assert.equal(branchLoads, loadsBeforeExport + 1, 'export reloads the branch list')
+
+  const targeted = await store.exportBranch('b-1', 'refs/heads/artel/custom')
+  assert.equal(posted.filter((entry) => entry.kind === 'export')[1].body.target, 'refs/heads/artel/custom')
+  assert.ok(targeted !== null)
+
+  const loadsBeforeRevert = branchLoads
+  assert.ok(await store.revertBranch('b-1') !== null)
+  assert.deepEqual(posted.find((entry) => entry.kind === 'revert').body, { sessionId: 'sess-1' })
+  assert.equal(branchLoads, loadsBeforeRevert + 1, 'revert reloads the branch list')
+
+  const loadsBeforeMaintenance = branchLoads
+  const stats = await store.maintainBranches()
+  assert.deepEqual(stats, maintenance)
+  assert.deepEqual(posted.find((entry) => entry.kind === 'maintenance').body, { sessionId: 'sess-1' })
+  assert.deepEqual(store.getSnapshot().branchMaintenance, maintenance, 'maintenance stats land in the snapshot')
+  assert.equal(branchLoads, loadsBeforeMaintenance + 1, 'maintenance reloads the branch list')
+  store.dispose()
+})
+
+test('the add row picks a branch for a new queue task', async () => {
+  const base = 'a'.repeat(40)
+  const branches = [
+    { id: 'b1', name: 'One', ref: 'refs/heads/artel/b1', baseCommit: base, tipCommit: null },
+    { id: 'b2', name: 'Two', ref: 'refs/heads/artel/b2', baseCommit: base, tipCommit: null },
+  ]
+  const branchQueue = {
+    ...queueFixture(),
+    model: 'branches',
+    project: { head: base, repoDir: 'C:\\state\\repos\\key.git', drift: { dirty: false, files: [] } },
+    currentBranchId: 'b1',
+    branches,
+  }
+  const branchState = { queue: branchQueue, project: branchQueue.project, currentBranchId: 'b1', branches }
+  const posts = []
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [],
+      route: ({ method, pathname, body }) => {
+        if (pathname === '/api/dsh-artel/queue' && method === 'GET') return reply(branchQueue)
+        if (pathname === '/api/dsh-artel/queue' && method === 'POST') {
+          posts.push(body)
+          return reply({ queue: branchQueue, added: 1 })
+        }
+        if (pathname === '/api/dsh-artel/queue/branches' && method === 'GET') return reply(branchState)
+        if (pathname === '/api/dsh-artel/factory' && method === 'GET') return reply({ boards: [] })
+        return undefined
+      },
+    },
+  })
+  let opened = await openArtel(state)
+  const picker = () => findAll(findByClass(opened, 'dsh-artel-queue__add'), (node) => node.type === 'select')[0]
+  const pickerNode = picker()
+  assert.ok(pickerNode !== undefined, 'a branch queue with two branches offers the branch picker')
+  assert.match(String(pickerNode.props.className), /dsh-artel-queue__branchPick/)
+  assert.equal(pickerNode.props['aria-label'], 'Ветка')
+  const options = findAll(pickerNode, (node) => node.type === 'option')
+  assert.deepEqual(options.map((node) => node.props.value), ['', 'b1', 'b2'], 'the current branch comes first')
+  assert.match(textOf(options[0]), /Текущая ветка/)
+  assert.deepEqual(options.slice(1).map((node) => textOf(node).trim()), ['One', 'Two'])
+  assert.equal(pickerNode.props.value, '', 'the current branch is the default')
+
+  picker().props.onChange({ target: { value: 'b2' } })
+  opened = await state.realm.renderer.flush()
+  assert.equal(picker().props.value, 'b2', 'the picker keeps the chosen branch')
+
+  const input = findAll(opened, (node) => node.type === 'input' && String(node.props.className).includes('dsh-artel-queue__input'))[0]
+  input.props.onChange({ target: { value: 'Проверь ветку два' } })
+  opened = await state.realm.renderer.flush()
+  findButton(findByClass(opened, 'dsh-artel-queue'), 'В очередь').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  assert.equal(posts.length, 1, 'adding a task reached the Host')
+  assert.deepEqual(posts[0].texts, ['Проверь ветку два'])
+  assert.equal(posts[0].branchId, 'b2', 'the chosen branch is posted with the task')
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
 })
 
 test('the queue head shows the current branch and opens the branch panel', async () => {

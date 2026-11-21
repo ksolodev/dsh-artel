@@ -2744,6 +2744,20 @@ test('a loaded language store follows the DSH language and switches instantly', 
   assert.equal(debug.language.t('surface.title'), 'Artel')
 })
 
+test('describeError prefers a translated error code over the host message', async () => {
+  const state = setup({ locale: 'ru' })
+  const debug = state.realm.window.__DSH_ARTEL_DEBUG__
+  state.realm.document.documentElement = { lang: 'ru' }
+  await debug.language.init()
+  const message = debug.describeError({ code: 'artel/not-found', message: 'Не найдено' })
+  assert.notEqual(message, 'Не найдено')
+  assert.match(message, /«Артели»/)
+  assert.equal(
+    debug.describeError({ code: 'artel/bad-language', message: 'Unsupported language', params: { language: 'de' } }),
+    'Язык de недоступен.',
+  )
+})
+
 test('an unknown language falls back to the base language and then to English', async () => {
   const state = setup({ locale: 'ru' })
   const debug = state.realm.window.__DSH_ARTEL_DEBUG__

@@ -1289,3 +1289,12 @@ test('settings accept a bundled language and reject anything else', async () => 
   assert.equal(cleared.status, 200)
   assert.equal(cleared.body.language, null)
 })
+
+test('a route error carries its code and params', async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-artel-routes-'))
+  const { webServer } = setup({ stateDir, localeDir: path.resolve('locale') })
+  const response = await call(webServer.routes, `${API_PREFIX}/settings`, { method: 'POST', body: { language: 'de' } })
+  assert.equal(response.status, 400)
+  assert.equal(response.body.code, 'artel/bad-language')
+  assert.deepEqual(response.body.params, { language: 'de' })
+})

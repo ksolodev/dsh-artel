@@ -295,6 +295,8 @@ test('the run phase tracks the latest status line, even on terminal runs', async
     const applied = f.engine.listRuns('s1')[0]
     assert.equal(applied.status, 'applied')
     assert.equal(applied.phase, 'Applied 1 file to your project.', 'the terminal run still keeps its last phase')
+    assert.equal(applied.phaseKey, 'feed.change.applied-one', 'the phase row carries the key its line came from')
+    assert.deepEqual(applied.phaseParams, {})
   } finally {
     await f.engine.dispose()
     await f.cleanup()
@@ -479,6 +481,7 @@ test('swarm contested files: first claimant keeps the area and the feed says so'
     const plan = feed.events.find((event) => event.kind === 'plan')
     assert.match(plan.text, /Contested/)
     assert.match(plan.text, /Orion claimed it, Vega keeps it/)
+    assert.equal(plan.key, undefined, 'a plan card written for the agents carries no host key')
     const phase = f.engine.listRuns('s1')[0].phase
     assert.match(phase, /^Work divided\./)
     assert.ok(phase.length <= 120, 'the plan phase is truncated to the rail line')

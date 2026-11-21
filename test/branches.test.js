@@ -1,11 +1,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { execFile } from 'node:child_process'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 
 import { BranchService, BranchError } from '../lib/branches.js'
 import { QueueStore, QUEUE_MODEL_BRANCHES } from '../lib/queue.js'
+
+const execFileAsync = promisify(execFile)
 
 function makeEngine({ assist = null } = {}) {
   const calls = { markApplied: [], refreshInstall: [], assists: [] }
@@ -74,6 +78,24 @@ async function commitToApplied(fx, { file, content, subject }) {
   await fs.writeFile(path.join(fx.projectPath, file), content)
   await fx.store.patch('s1', { project: { ...queue.project, head: commit } })
   return commit
+}
+
+async function gitOutput(cwd, args) {
+  return (await execFileAsync('git', args, { cwd })).stdout.trim()
+}
+
+/** Turn the fixture project into a real user git work tree with one commit. */
+async function makeUserRepo(projectPath) {
+  await execFileAsync('git', ['init'], { cwd: projectPath })
+  await execFileAsync('git', ['config', 'user.email', 'user@example.com'], { cwd: projectPath })
+  await execFileAsync('git', ['config', 'user.name', 'User'], { cwd: projectPath })
+  await execFileAsync('git', ['add', '--all'], { cwd: projectPath })
+  await execFileAsync('git', ['commit', '-m', 'initial'], { cwd: projectPath })
+}
+
+async function userRef(projectPath, name) {
+  const result = await execFileAsync('git', ['rev-parse', '--verify', '--quiet', `${name}^{commit}`], { cwd: projectPath }).catch(() => null)
+  return result === null ? null : result.stdout.trim()
 }
 
 test('ensure() creates the app repository, imports the project and patches the queue', async () => {
@@ -383,6 +405,181 @@ test('merge() lets the fixer resolve a conflict between branches', async () => {
     const work = path.join(fx.root, 'merged-check')
     await git.materialize(work, result.mergeCommit)
     assert.equal(await fs.readFile(path.join(work, 'src/app.js'), 'utf8'), 'export const answer = 5\n')
+  } finally {
+    await fx.cleanup()
+  }
+})
+
+test('getBranch() returns a record and reports unknown ids; list() exposes the repository size', async () => {
+  const fx = await fixture()
+  try {
+    const { branch } = await fx.service.createBranch('s1', { name: 'Known' })
+    const found = await fx.service.getBranch('s1', branch.id)
+    assert.equal(found.id, branch.id)
+    assert.equal(found.name, 'Known')
+
+    const missing = await fx.service.getBranch('s1', 'b-missing').catch((error) => error)
+    assert.ok(missing instanceof BranchError)
+    assert.equal(missing.status, 404)
+    assert.equal(missing.code, 'artel/branch-missing')
+
+    const listed = await fx.service.list('s1')
+    assert.equal(typeof listed.repo.objects, 'number')
+    assert.ok(listed.repo.objects > 0)
+    assert.equal(typeof listed.repo.sizeText, 'string')
+    assert.match(listed.repo.sizeText, /^(?:\d+ B|\d+\.\d KiB|\d+\.\d MiB|\d+\.\d GiB)$/)
+
+    const maintenance = await fx.service.maintenance('s1')
+    assert.equal(typeof maintenance.before.objects, 'number')
+    assert.equal(typeof maintenance.after.objects, 'number')
+    assert.equal(typeof maintenance.before.sizeBytes, 'number')
+    assert.equal(typeof maintenance.after.sizeText, 'string')
+    assert.equal(typeof maintenance.freedBytes, 'number')
+    assert.ok(maintenance.freedBytes >= 0)
+    assert.equal(maintenance.freedBytes, Math.max(0, maintenance.before.sizeBytes - maintenance.after.sizeBytes))
+  } finally {
+    await fx.cleanup()
+  }
+})
+
+test('exportBranch() writes the branch ref into the user repository and records it', async () => {
+  const fx = await fixture()
+  try {
+    const { branch } = await fx.service.createBranch('s1', { name: 'Export' })
+    const commit = await commitOnBranch(fx, branch, { file: 'src/app.js', content: 'export const answer = 2\n', subject: 'Answer 2' })
+
+    const refused = await fx.service.exportBranch('s1', { branchId: branch.id }).catch((error) => error)
+    assert.ok(refused instanceof BranchError)
+    assert.equal(refused.status, 409)
+    assert.equal(refused.code, 'artel/not-a-git-project')
+    assert.equal((await fx.store.get('s1')).branches[0].exported ?? null, null)
+
+    await makeUserRepo(fx.projectPath)
+    const headBefore = await gitOutput(fx.projectPath, ['rev-parse', 'HEAD'])
+    const statusBefore = await gitOutput(fx.projectPath, ['status', '--porcelain'])
+
+    const exported = await fx.service.exportBranch('s1', { branchId: branch.id })
+
+    assert.equal(exported.exported.target, `refs/heads/artel/${branch.id}`)
+    assert.equal(exported.exported.commit, commit)
+    assert.equal(typeof exported.exported.at, 'number')
+    assert.equal(await userRef(fx.projectPath, exported.exported.target), commit)
+    assert.equal(await gitOutput(fx.projectPath, ['rev-parse', 'HEAD']), headBefore)
+    assert.equal(await gitOutput(fx.projectPath, ['status', '--porcelain']), statusBefore)
+    assert.equal(await fs.stat(path.join(fx.projectPath, '.git', 'FETCH_HEAD')).then(() => true).catch(() => false), false)
+    const recorded = exported.queue.branches.find((entry) => entry.id === branch.id)
+    assert.deepEqual(recorded.exported, { target: exported.exported.target, at: exported.exported.at })
+    assert.equal(recorded.updatedAt, exported.exported.at)
+
+    const custom = await fx.service.exportBranch('s1', { branchId: branch.id, target: 'refs/heads/artel/custom' })
+    assert.equal(custom.exported.target, 'refs/heads/artel/custom')
+    assert.equal(await userRef(fx.projectPath, 'refs/heads/artel/custom'), commit)
+
+    const badTarget = await fx.service.exportBranch('s1', { branchId: branch.id, target: 'refs/heads/main' }).catch((error) => error)
+    assert.ok(badTarget instanceof BranchError)
+    assert.equal(badTarget.status, 400)
+    assert.equal(badTarget.code, 'artel/bad-request')
+
+    await execFileAsync('git', ['update-ref', 'refs/heads/artel/custom', headBefore], { cwd: fx.projectPath })
+    const conflict = await fx.service.exportBranch('s1', { branchId: branch.id, target: 'refs/heads/artel/custom' }).catch((error) => error)
+    assert.ok(conflict instanceof BranchError)
+    assert.equal(conflict.status, 409)
+    assert.equal(conflict.code, 'artel/export-exists')
+    assert.equal(await userRef(fx.projectPath, 'refs/heads/artel/custom'), headBefore)
+  } finally {
+    await fx.cleanup()
+  }
+})
+
+test('apply() records history and revertApply() restores the state before the last apply', async () => {
+  const fx = await fixture()
+  try {
+    const headBefore = (await fx.store.get('s1')).project.head
+    const first = (await fx.service.createBranch('s1', { name: 'First' })).branch
+    const firstCommit = await commitOnBranch(fx, first, { file: 'src/app.js', content: 'export const answer = 2\n', subject: 'First answer' })
+    const afterFirst = await fx.service.apply('s1', { branchId: first.id })
+
+    assert.equal(afterFirst.queue.project.applies.length, 1)
+    const firstEntry = afterFirst.queue.project.applies[0]
+    assert.match(firstEntry.id, /^ap-[a-z0-9]+-[a-z0-9]+$/)
+    assert.equal(firstEntry.branchId, first.id)
+    assert.equal(firstEntry.branchName, 'First')
+    assert.equal(firstEntry.beforeHead, headBefore)
+    assert.equal(firstEntry.afterHead, firstCommit)
+    assert.equal(firstEntry.driftCommit, null)
+    assert.deepEqual(firstEntry.commits, [firstCommit])
+    assert.equal(firstEntry.at, afterFirst.applied.at)
+
+    const second = (await fx.service.createBranch('s1', { name: 'Second' })).branch
+    const secondCommit = await commitOnBranch(fx, second, { file: 'README.md', content: '# Second\n', subject: 'Second note' })
+    const afterSecond = await fx.service.apply('s1', { branchId: second.id })
+
+    assert.equal(afterSecond.queue.project.applies.length, 2)
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'README.md'), 'utf8'), '# Second\n')
+
+    const reverted = await fx.service.revertApply('s1')
+    const revertCommit = reverted.reverted.commit
+    assert.equal(reverted.reverted.branchId, second.id)
+    assert.equal(reverted.reverted.branchName, 'Second')
+    assert.equal(reverted.reverted.undone, secondCommit)
+    assert.match(revertCommit, /^[0-9a-f]{40}$/)
+    assert.notEqual(revertCommit, secondCommit)
+
+    const queue = reverted.queue
+    assert.equal(queue.project.head, revertCommit)
+    assert.equal(queue.project.applied, null)
+    assert.equal(queue.project.applies.length, 1)
+    assert.equal(queue.project.applies[0].branchId, first.id)
+    assert.equal(queue.project.reverted.branchId, second.id)
+    assert.equal(queue.project.reverted.revertCommit, revertCommit)
+    assert.equal(typeof queue.project.reverted.revertedAt, 'number')
+    const revertedBranch = queue.branches.find((entry) => entry.id === second.id)
+    assert.equal(revertedBranch.appliedAt, null)
+    assert.equal(revertedBranch.revertedAt, queue.project.reverted.revertedAt)
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'README.md'), 'utf8'), '# Demo\n')
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 2\n')
+
+    const git = await fx.service.ensure('s1')
+    assert.equal(await git.head(), revertCommit)
+    assert.equal(await git.ref(second.ref), secondCommit)
+
+    const wrongBranch = await fx.service.revertApply('s1', { branchId: second.id }).catch((error) => error)
+    assert.ok(wrongBranch instanceof BranchError)
+    assert.equal(wrongBranch.status, 409)
+    assert.equal(wrongBranch.code, 'artel/revert-not-last')
+    assert.equal(wrongBranch.details.head, revertCommit)
+    assert.equal(wrongBranch.details.last.branchId, first.id)
+
+    const movedHead = await fx.service.revertApply('s1').catch((error) => error)
+    assert.ok(movedHead instanceof BranchError)
+    assert.equal(movedHead.code, 'artel/revert-not-last')
+    assert.equal(movedHead.details.head, revertCommit)
+    assert.equal(movedHead.details.expected, firstCommit)
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'README.md'), 'utf8'), '# Demo\n')
+  } finally {
+    await fx.cleanup()
+  }
+})
+
+test('revertApply() refuses an empty history and a dirty project', async () => {
+  const fx = await fixture()
+  try {
+    const empty = await fx.service.revertApply('s1').catch((error) => error)
+    assert.ok(empty instanceof BranchError)
+    assert.equal(empty.status, 409)
+    assert.equal(empty.code, 'artel/nothing-to-revert')
+
+    const { branch } = await fx.service.createBranch('s1', { name: 'Drift' })
+    await commitOnBranch(fx, branch, { file: 'src/app.js', content: 'export const answer = 2\n', subject: 'Branch' })
+    await fx.service.apply('s1', { branchId: branch.id })
+    await fs.writeFile(path.join(fx.projectPath, 'README.md'), '# Local edit\n')
+
+    const dirty = await fx.service.revertApply('s1').catch((error) => error)
+    assert.ok(dirty instanceof BranchError)
+    assert.equal(dirty.status, 409)
+    assert.equal(dirty.code, 'artel/project-drift')
+    assert.deepEqual(dirty.details.drift.files, ['README.md'])
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 2\n')
   } finally {
     await fx.cleanup()
   }

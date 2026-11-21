@@ -162,9 +162,10 @@ with a warning in the feed.
 Every chat session has a queue. Stack tasks in the **Waiting** column with **Add**: each one is an ordinary
 Artel run with its own mode and model — Solo, Swarm, Conductor, Orchestrator or Fusion — but it waits its turn
 instead of starting at once. The Orchestrator is a queue mode like any other: its plan is accepted
-automatically, because nobody will approve it at night. The queue belongs to the session, so another chat has
-its own; a chat message sent while the queue is running becomes the first task instead of interrupting the
-agent.
+automatically, because nobody will approve it at night. When the queue has more than one branch, the add row
+also lets each task pick its branch, with the current branch as the default. The queue belongs to the
+session, so another chat has its own; a chat message sent while the queue is running becomes the first task
+instead of interrupting the agent.
 
 Flip **Auto-queue** and the stack becomes an unattended night shift. Before the first task the pre-flight
 asks you to decide about earlier versions that were never saved or parked, shows the check command and the
@@ -189,7 +190,14 @@ night. The queue head shows the current branch, and **Все ветки** opens 
 commits with their diffs, and the apply and merge dialogs. **Применить ветку** applies the whole branch in one
 action; unticking a commit rebuilds the remaining ones on the current applied state. Uncommitted project
 changes are detected before an apply and become an explicit drift commit instead of being silently overwritten,
-and branches merge like git branches (`--no-ff`, with a fixer agent resolving textual conflicts).
+and branches merge like git branches (`--no-ff`, with a fixer agent resolving textual conflicts). When the
+project itself is a git work tree, **Экспортировать в git** imports a branch into it as
+`refs/heads/artel/<branch-id>` — only the ref and its objects, leaving the work tree and `HEAD` alone and
+refusing non-fast-forward updates instead of forcing them. **Отменить применение** undoes the last applied
+branch as a new commit with the inverse changes, so history only grows; it refuses a project with uncommitted
+changes or an apply that is no longer the last one. The modal shows the queue repository's size next to
+**Почистить**, which runs a full `git gc` and reports the bytes freed, and **Доработать с этого результата**
+starts a new branch from the applied state.
 
 **Parked** is where tasks go when they cannot pass unattended: the check still fails after two fixes, the
 diff contains a secret or junk, the agent tries to publish outward, or the agent reports that it is blocked.

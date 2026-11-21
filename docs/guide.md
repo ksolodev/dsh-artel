@@ -298,7 +298,15 @@ branch tip, and each task's change is its own small commit, not the whole night.
 current branch, and **Все ветки** opens the branch modal — the graph, the commits with their diffs, and the
 apply and merge dialogs. **Применить ветку** applies the whole branch in one action; unticking a commit
 rebuilds the remaining ones on the current applied state, uncommitted project changes become an explicit drift
-commit, and branches merge like git branches (`--no-ff`, a fixer agent resolving textual conflicts).
+commit, and branches merge like git branches (`--no-ff`, a fixer agent resolving textual conflicts). When the
+project itself is a git work tree, **Экспортировать в git** imports a branch into it as
+`refs/heads/artel/<branch-id>`: only the ref and its objects are written, the work tree and `HEAD` stay
+untouched, and an update that is not a fast-forward is refused instead of forced. **Отменить применение**
+undoes the last applied branch as a new commit with the inverse changes — history only grows, and it refuses a
+project with uncommitted changes or an apply that is no longer the last one. The same modal shows the queue
+repository's size next to **Почистить**, a full `git gc` that reports the bytes freed, and **Доработать с
+этого результата** starts a new branch from the applied state. A queue with more than one branch also lets
+each task pick its branch in the add row.
 
 **Parked** collects the tasks that cannot pass unattended: the check failed after two fixes, the diff
 contains a secret or junk, the agent tried to publish outward, or the agent reported that it is blocked. A

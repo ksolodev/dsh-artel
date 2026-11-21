@@ -4,6 +4,53 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] — 2026-11-21
+
+Queue history can now leave the app: a branch is exported into the project's own
+git repository, and the last apply can be undone as a new commit.
+
+### Added
+
+- **Export to git.** «Экспортировать в git» in the branch modal imports a queue
+  branch into the project's repository as `refs/heads/artel/<branch-id>` (the
+  target field accepts another ref inside `refs/heads/artel/`). Only the ref and
+  its objects are fetched, so the project's work tree and `HEAD` stay untouched
+  and the user's branches cannot be overwritten; a project that is not inside a
+  git work tree is refused with `409 artel/not-a-git-project`. Updates are never
+  forced: a non-fast-forward target answers `409 artel/export-exists`, while a
+  target behind new branch commits fast-forwards. The branch record keeps
+  `exported {target, at}` and the modal shows it.
+- **Revert the last apply.** Applies are recorded in `queue.project.applies`
+  (the last 20), and «Отменить применение» undoes the most recent one as a new
+  commit: the tree from before the apply, the inverse diff written back, and
+  `refs/heads/applied` moved with the usual compare-and-swap. Nothing is
+  rewritten and the branch and its commits stay; the branch is marked
+  `revertedAt`. Only the last apply can be undone (`409 artel/revert-not-last`),
+  uncommitted project changes refuse it (`409 artel/project-drift`), and an
+  empty history answers `409 artel/nothing-to-revert`.
+- **Repository maintenance.** `POST /queue/maintenance` measures the queue
+  repository (`git count-objects -v`), runs `git gc --prune=now`, prunes stale
+  worktrees and reports `{before, after, freedBytes}`; `git gc --auto` also runs
+  best effort after an apply, a revert, a merge and a branch removal. The branch
+  modal shows the repository size with a «Почистить» button and the bytes freed.
+- **Per-task branch choice.** `POST /queue` accepts `branchId`, and the add row
+  shows a branch picker when the queue has more than one branch (the current
+  branch stays the default). Each task captures its branch when it is added; an
+  unknown branch answers `artel/branch-missing`.
+- **Rework from the applied result.** «Доработать с этого результата» creates a
+  new branch whose base is the applied project head and switches to it, so the
+  next task starts from the applied state instead of the old chain.
+- **Branch graph.** A branch row carries a glyph (`●` current, `◇` the applied
+  tip, `│` otherwise), the short base and tip commits, and a marker on a
+  reverted branch.
+
+### Fixed
+
+- A feed append no longer writes back a run record captured before its async
+  file write: appends are serialized per run and the record is read again after
+  the write, so a status patch that lands meanwhile (the Orchestrator fixer
+  settling) survives and a waiting run is not silently moved back to running.
+
 ## [0.12.1] — 2026-11-21
 
 ### Fixed

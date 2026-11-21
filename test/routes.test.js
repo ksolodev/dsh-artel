@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { Readable } from 'node:stream'
 import test from 'node:test'
@@ -1257,4 +1258,34 @@ test('the queue and factory routes stay loopback-only', async () => {
   assert.equal(factory.body.code, 'artel/forbidden')
   const crossSite = await call(webServer.routes, `${API_PREFIX}/factory`, { headers: { 'sec-fetch-site': 'cross-site' } })
   assert.equal(crossSite.status, 403)
+})
+
+test('settings default to auto and list the bundled languages', async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-artel-routes-'))
+  const { webServer } = setup({ stateDir, localeDir: path.resolve('locale') })
+  const response = await call(webServer.routes, `${API_PREFIX}/settings`)
+  assert.equal(response.status, 200)
+  assert.equal(response.body.language, null)
+  assert.deepEqual(response.body.available.map((entry) => entry.id), ['en', 'ru', 'zh'])
+})
+
+test('settings accept a bundled language and reject anything else', async () => {
+  const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), 'dsh-artel-routes-'))
+  const { webServer } = setup({ stateDir, localeDir: path.resolve('locale') })
+  const saved = await call(webServer.routes, `${API_PREFIX}/settings`, { method: 'POST', body: { language: 'ru' } })
+  assert.equal(saved.status, 200)
+  assert.equal(saved.body.language, 'ru')
+  const reread = await call(webServer.routes, `${API_PREFIX}/settings`)
+  assert.equal(reread.body.language, 'ru')
+
+  const unknown = await call(webServer.routes, `${API_PREFIX}/settings`, { method: 'POST', body: { language: 'de' } })
+  assert.equal(unknown.status, 400)
+  assert.equal(unknown.body.code, 'artel/bad-language')
+
+  const malformed = await call(webServer.routes, `${API_PREFIX}/settings`, { method: 'POST', body: { language: 'ru ru' } })
+  assert.equal(malformed.status, 400)
+
+  const cleared = await call(webServer.routes, `${API_PREFIX}/settings`, { method: 'POST', body: { language: null } })
+  assert.equal(cleared.status, 200)
+  assert.equal(cleared.body.language, null)
 })

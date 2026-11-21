@@ -145,8 +145,9 @@ the client boot graph).
       the project.
 - [ ] Apply conflict check: edit a file in the project while a run waits, then Apply — Artel rejects
       the apply and reports the conflicting file, leaving your edit alone.
-- [ ] UI language switch (en / ru / zh) and the plugin card title/description/icon in the plugin
-      manager.
+- [x] UI language switch (en / ru / zh) and the plugin card title/description/icon in the plugin
+      manager; also switch a persisted run, a queue task and a Factory ticket between all three
+      languages and check no Host prose leaks through.
 - [ ] `npm publish` (or the web-OTP driver), GitHub release with both tarball assets, and the
       awesome-dsh-plugin entry updated (`tarball:` + `description`).
 - [ ] `README.md` and `docs/guide*.md` describe the current behavior, including the limitations

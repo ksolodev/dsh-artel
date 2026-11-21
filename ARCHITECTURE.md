@@ -705,6 +705,18 @@ pipeline and `#step` drives the current stage:
   queue's gate and the Factory's test stage share; `lib/check.js` exports `suggestCheckCommand`, `runCheck`,
   `scanHygiene`, `scanOutward` and `freeDiskBytes`, all injectable and unit-tested without DSH.
 
+## Localization
+
+`locale/<tag>.json` holds `meta` (read by the DSH plugin manager: title, description, detail, nativeName, dir) and a flat
+`strings` catalog. `tools/build-locales.mjs` compiles the catalogs into the generated block in `lib/client.js`; `--check`
+(run by `npm test`) fails when the block is stale, when a non-plural key is missing, when a locale has the wrong plural
+categories, or when placeholders differ from English. Adding a language is a data change: one JSON file, no code edit.
+
+The Host never imports translations. It emits `{ key, params, text }` records; the client resolves the key against the
+active language and falls back to the English `text` for data persisted by older versions. The active language lives in
+`<stateDir>/settings.json` (`null` follows the DSH shell) and is served by `GET/POST /api/dsh-artel/settings`.
+Plural keys use `Intl.PluralRules` categories as suffixes; dates use `Intl.DateTimeFormat`. See `docs/translating.md`.
+
 ## Package layout (no build step)
 
 ```
@@ -718,7 +730,7 @@ dsh-artel/
                           #   project-chats.js (v0.11: task chats + workspace membership bridge)
                           #   git.js branches.js (v0.12: the queue's git repository and its branches;
                           #     v0.13: export into the user's repository, revert, maintenance)
-  locale/{en,ru,zh}.json  # meta.title/meta.description + strings
+  locale/<tag>.json       # meta (plugin card, nativeName, dir) + flat strings; compiled by tools/build-locales.mjs
   icon.svg
   README.md, LICENSE
   docs/guide.md           # meta.detail (en; guide.ru.md / guide.zh.md are the localized copies)
@@ -729,7 +741,7 @@ Server code is plain ESM JavaScript (no TS) so nothing has to be compiled; the c
 
 ## Config (schemastery)
 
-`copyRoot` (default `<DSH_HOME>/artel/<profile>/copies`), `stateDir` (default `<DSH_HOME>/artel/<profile>/state`; run records and feeds live in `runs/` and `feeds/`, and the v0.8 stores in `queue/`, `tickets/boards.json` and `attachments/`), `swarmAgentCount` (3, 2..8; a Conductor run starts one conductor on top, so `1 + this` agents), `orchestratorParts` (3, 2..4; an Orchestrator plan with more parts is folded into the last one), `maxRunsPerSession` (10; with task chats it is counted per chat the task was started from — `run.originSessionId` — so every task chat cannot keep an extra run forever), `keepCopiesHours` (72), `diffContext` (3), `idleGraceMs` (1200, how long a potential peer message may still be in flight before the run is called idle), `excludeGlobs` for non-git copies. The auto-queue and the Factory add no config keys: their settings are per session (queue) and per board (tickets). No behavior-changing defaults that surprise.
+`copyRoot` (default `<DSH_HOME>/artel/<profile>/copies`), `stateDir` (default `<DSH_HOME>/artel/<profile>/state`; run records and feeds live in `runs/` and `feeds/`, the v0.8 stores in `queue/`, `tickets/boards.json` and `attachments/`, and the panel language in `settings.json`), `swarmAgentCount` (3, 2..8; a Conductor run starts one conductor on top, so `1 + this` agents), `orchestratorParts` (3, 2..4; an Orchestrator plan with more parts is folded into the last one), `maxRunsPerSession` (10; with task chats it is counted per chat the task was started from — `run.originSessionId` — so every task chat cannot keep an extra run forever), `keepCopiesHours` (72), `diffContext` (3), `idleGraceMs` (1200, how long a potential peer message may still be in flight before the run is called idle), `excludeGlobs` for non-git copies. The auto-queue and the Factory add no config keys: their settings are per session (queue) and per board (tickets). No behavior-changing defaults that surprise.
 
 ## Milestones
 

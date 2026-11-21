@@ -1,5 +1,7 @@
 # Artel
 
+[English](guide.md) · [Русский](guide.ru.md) · [中文](guide.zh.md)
+
 Artel runs a development task in an isolated copy of the project that the current chat session works
 in: it shows the work as it happens and moves the result into your project only when you ask.
 

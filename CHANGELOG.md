@@ -4,6 +4,50 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] — 2026-11-22
+
+The whole panel now speaks the language you choose. Every user-visible string —
+the surface, the run feed, the auto-queue journal, the Factory board and API
+errors — comes from a catalogue, so a new language is a data change, not a code
+change. English, Russian and Chinese ship; «Auto» follows the DSH shell.
+
+### Added
+
+- **Translation catalogues.** `locale/<tag>.json` holds plugin-card metadata and
+  a flat `strings` map; `tools/build-locales.mjs` compiles them into the
+  generated block in `lib/client.js`, and `npm test` runs `--check` so a stale
+  block fails CI. `docs/translating.md` explains the key rules, placeholders,
+  plural categories and the five steps for adding a language.
+- **Language switch in the surface header** (globe menu): English, Русский,
+  中文 or «Auto» (follow DSH). The choice is stored per profile.
+- **`GET/POST /api/dsh-artel/settings`** and `<stateDir>/settings.json`
+  (`{version: 1, language: null}`), with BCP-47 validation and the list of
+  available languages derived from the catalogue files.
+- **Keyed Host records.** Feed events, queue tasks, branch names, stop reasons,
+  Factory tickets/events/waiting reasons and API errors now carry
+  `{ key, params, text }`; the client resolves the key and keeps `text` as the
+  English fallback for records written by older versions.
+- **Translated READMEs** (`README.ru.md`, `README.zh.md`) and language
+  navigation in the READMEs and guides.
+
+### Changed
+
+- **`Intl.PluralRules` and `Intl.DateTimeFormat`** replace the hand-written
+  Russian plural helper and the browser-locale dates; plural keys use
+  `.one/.few/.many/.other` categories per language.
+- **Error codes are translated.** Route failures carry stable codes and
+  `params`, and `describeError` words them in the active language before
+  falling back to the Host message.
+- **Factory and queue prose is no longer hard-coded** in Russian or English;
+  the legacy strings stay in the payloads byte-identical, so old clients, logs
+  and persisted runs keep rendering as before.
+
+### Fixed
+
+- The debug bridge exposes `language`, `localized`, `describeError`,
+  `dateLocale` and a one-argument `chatTasksLabel`, so the panel's language
+  behaviour is testable without a browser.
+
 ## [0.13.1] — 2026-11-21
 
 Git is now a stated requirement instead of a surprise in the middle of an

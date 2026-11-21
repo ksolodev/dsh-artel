@@ -1,6 +1,6 @@
 {
   "name": "dsh-artel",
-  "version": "0.13.1",
+  "version": "0.14.0",
   "description": "Run coding agents in a separate copy of your project: Solo, Swarm, Conductor, Fusion or Orchestrator — queue tasks for an unattended night shift, run the ticket Factory from incoming request to ready pull request, review the changes and apply them yourself.",
   "license": "MIT",
   "repository": {

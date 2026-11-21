@@ -37,6 +37,7 @@ class FakeEngine {
     this.feeds = new Map()
     this.changesByRun = new Map()
     this.started = []
+    this.startGate = null
     this.nextId = 0
     this.defaultChanges = [{ path: 'src/app.js', status: 'modified', added: 1, removed: 1 }]
   }
@@ -50,6 +51,9 @@ class FakeEngine {
     this.calls.push({ method: 'start', request })
     const run = await this.#newRun(request)
     this.started.push(run)
+    // Tests can hold the start inside the runner's await to land a Stop in the
+    // window between «run created» and «task is running».
+    if (this.startGate !== null) await this.startGate
     return this.#summary(run)
   }
 
@@ -634,9 +638,11 @@ test('a rate-limited run is requeued with retryAt and the queue continues later'
     f.clock.value = waiting.retryAt + 1000
     const second = await waitFor(() => f.engine.findCall('start')[1])
     assert.equal(second.request.task, 'Do the work')
+    // The retry clears `retryAt` first and only then starts the run, so wait for
+    // the task itself: under load the two states are a few ticks apart.
     const resumed = await waitFor(async () => {
       const current = await f.summary()
-      return current.retryAt === null ? current : null
+      return current.retryAt === null && current.tasks[0].status === 'running' ? current : null
     })
     assert.equal(resumed.tasks[0].status, 'running')
   } finally {
@@ -660,6 +666,62 @@ test('stop parks the running task and finishes with stopped', async () => {
     assert.equal(summary.results.stopKey, 'queue.stop.stopped')
     assert.equal(f.engine.findCall('interrupt')[0].runId, run.id)
     assert.equal(summary.results.stopReason, 'stopped')
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('stop wins while a start is still in flight', async () => {
+  const f = await fixture('stop-during-start')
+  try {
+    await f.runner.addTasks({ sessionId: 's1', projectPath: f.projectPath, texts: ['Slow start'] })
+    let release = null
+    f.engine.startGate = new Promise((resolve) => {
+      release = resolve
+    })
+    await f.runner.setAutopilot({ sessionId: 's1', projectPath: f.projectPath, autopilot: true, checkCommand: 'node -e "process.exit(0)"' })
+    const run = await waitFor(() => f.engine.started[0])
+
+    const pending = f.runner.stop('s1')
+    // Release the held start: the runner must see the cancellation after the
+    // start resolves and park the partial work before the stop finishes.
+    release()
+    const summary = await pending
+    assert.equal(summary.stopReason, 'stopped')
+    assert.equal(summary.autopilot, false)
+    assert.equal(summary.tasks[0].status, 'parked')
+    assert.match(summary.tasks[0].reason, /Вы остановили автоочередь/)
+    assert.equal(summary.tasks[0].reasonKey, 'queue.reason.stopped')
+    assert.equal(f.engine.findCall('interrupt')[0].runId, run.id)
+  } finally {
+    f.engine.startGate = null
+    await f.cleanup()
+  }
+})
+
+test('stop aborts a long check instead of waiting it out', async () => {
+  const f = await fixture('stop-during-check')
+  try {
+    await f.runner.addTasks({ sessionId: 's1', projectPath: f.projectPath, texts: ['Check task'] })
+    await f.runner.setAutopilot({
+      sessionId: 's1',
+      projectPath: f.projectPath,
+      autopilot: true,
+      checkCommand: 'node -e "setTimeout(() => process.exit(0), 60000)"',
+    })
+    const run = await waitFor(() => f.engine.started[0])
+    f.engine.setStatus(run.id, 'waiting', { changeCount: 1 })
+    await waitFor(() => (f.store.get('s1')?.events ?? []).some((event) => String(event.text ?? '').includes('Тесты:')))
+
+    const startedAt = Date.now()
+    const summary = await f.runner.stop('s1')
+    const elapsed = Date.now() - startedAt
+    assert.equal(summary.stopReason, 'stopped')
+    assert.equal(summary.tasks[0].status, 'parked')
+    assert.equal(summary.tasks[0].reasonKey, 'queue.reason.stopped')
+    // Without the abort Stop would wait for the 60 s check (or the 5 s fixture
+    // timeout); the killed check must release it almost at once.
+    assert.ok(elapsed < 4000, `stop waited ${elapsed} ms for the check`)
   } finally {
     await f.cleanup()
   }

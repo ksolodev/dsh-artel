@@ -462,3 +462,86 @@ All routes keep the existing prefix and local (no-auth) server model; errors kee
 - Whether the rebuild result should be written back to the branch as a new commit or only
   applied to the project (proposed: only applied; "rework from result" is a 0.13.0
   action).
+
+## 16. 0.13.0 addendum — export, revert, maintenance, per-task branches
+
+Decided after 0.12.1 shipped; the 0.12.0 architecture above stands unchanged.
+
+### 16.1 Export a branch into the user's repository (opt-in)
+
+- Only for projects that are inside a git work tree. The app still never creates a
+  `.git` in the project; the user repository is the user's own checkout.
+- `POST /queue/branches/:id/export` with `{ sessionId, target? }`.
+- Default target `refs/heads/artel/<branch-id>`. A custom target must match
+  `refs/heads/artel/` and pass `git check-ref-format`; the parser refuses anything else,
+  so a queue branch can never overwrite `main`, `master` or a user feature branch.
+- Implementation: `git -C <project> fetch --no-tags --no-write-fetch-head <appRepoDir>
+  refs/heads/artel/<branch-id>:<target>`. Objects are imported into the user's repo, the
+  working tree and HEAD are never touched, and no user hooks run.
+- No forced updates: a fetch that would not fast-forward fails; when the target already
+  exists the API answers `409 artel/export-exists` with a hint to pick another target.
+  A fast-forward re-export (the branch got new commits) is allowed.
+- A project without a git work tree answers `409 artel/not-a-git-project`; the client
+  hides the export button when `projectState` says the project is not a git checkout.
+- Bookkeeping: `branch.exported = { target, at }`; the branch card shows the target and
+  a `git checkout <target>` hint.
+- Exporting does not change the queue, the project or the app repository.
+
+### 16.2 Revert the last apply
+
+- `apply()` records history in `queue.project.applies` (the last 20 entries):
+  `{ id, branchId, branchName, beforeHead, afterHead, driftCommit, commits, at }`.
+- `POST /queue/branches/:id/revert` undoes the last applied branch when the project head
+  still equals that apply's `afterHead`; otherwise `409 artel/revert-not-last` explains
+  that later applies must be reverted first.
+- A revert is a new commit in the app repository whose tree is `beforeHead`'s tree and
+  whose parent is the current head; the inverse diff is written back to the project and
+  `refs/heads/applied` moves with a compare-and-swap. History is append-only: no refs are
+  rewritten and the branch and its commits survive.
+- Uncommitted manual edits block a revert (`409 artel/project-drift`): commit or discard
+  them first. Revert never guesses.
+- Bookkeeping: the applies entry moves to `queue.project.reverted`, `project.applied`
+  becomes null, the branch gets `revertedAt`, and its `appliedAt` is cleared.
+- Nothing to revert → `409 artel/nothing-to-revert`.
+
+### 16.3 Maintenance
+
+- `ArtelGit.countObjects()` reads `git count-objects -v` (objects, size, in-pack,
+  size-pack) and reports a human byte size; `gc({ pruneNow })` runs `git gc` and
+  `gcAuto()` runs `git gc --auto --quiet` best effort.
+- `POST /queue/maintenance` returns `{ before, after, freedBytes }`; `GET /queue/branches`
+  includes the current repository size so the branch modal can show it.
+- `gc --auto` runs best effort after apply, merge and branch removal; the manual
+  «Почистить» button in the branch modal runs the full prune and reports the freed bytes.
+
+### 16.4 Per-task branch selection
+
+- `POST /queue` and `QueueRunner.addTasks(...)` accept `branchId`. It must name one of the
+  queue branches (`409 artel/branch-missing` otherwise); every task created by that call
+  captures the id at add time. Without it, tasks use the current branch and the first
+  task still auto-creates the branch.
+- The queue add row shows a branch selector when the queue has more than one branch; the
+  current branch stays the default.
+
+### 16.5 Rework from result
+
+- The branch modal offers «Доработать с этого результата»: it creates a new branch whose
+  base is the applied project head and makes it current, so the next task starts from the
+  applied state instead of the old chain.
+
+### 16.6 Graph polish
+
+- Branch rows show a one-column graph glyph (`●` current, `◇` applied tip, `│` otherwise)
+  and the short base and tip commits; the branch card keeps the commit list and marks the
+  applied tip.
+
+### 16.7 Acceptance for 0.13.0
+
+1. Export creates or fast-forwards `refs/heads/artel/<id>` in the user's repository
+   without touching its work tree, HEAD or hooks; a non-git project gets a clear refusal.
+2. Revert restores the project to the state before the last apply as a new commit and is
+   refused with a clear code when a later apply happened.
+3. Maintenance shrinks the app repository and reports the before/after size.
+4. A task can be queued onto a non-current branch and the add row exposes the choice.
+5. Rework-from-result starts a new branch from the applied state.
+6. Everything from 0.12.0 stays green; the full suite is green on node 22 and 24.

@@ -945,11 +945,13 @@ test('plugin registers one conversation.input.left entry and diagnostics', async
   assert.ok(state.realm.window.__DSH_ARTEL_DEBUG__ !== undefined)
 })
 
-test('project chat helpers group, pluralize and title rows', () => {
+test('project chat helpers group, pluralize and title rows', async () => {
   const realm = createRealm()
   const plugin = realm.load()
   plugin.apply(createCtx(realm).ctx)
   const debug = realm.window.__DSH_ARTEL_DEBUG__
+  realm.document.documentElement = { lang: 'ru' }
+  await debug.language.init()
   const ru = debug.dictionaries.ru
   const t = (key) => (ru[key] !== undefined ? ru[key] : key)
 
@@ -973,17 +975,22 @@ test('project chat helpers group, pluralize and title rows', () => {
   assert.equal(debug.chatTitleOf({ lastTask: 'Add a button' }), 'Add a button')
   assert.equal(debug.chatTitleOf({ sessionId: 'session-42' }), 'session-42')
 
-  assert.equal(debug.chatTasksLabel(t, 1), '1 задача Артели')
-  assert.equal(debug.chatTasksLabel(t, 3), '3 задачи Артели')
-  assert.equal(debug.chatTasksLabel(t, 5), '5 задач Артели')
-  assert.equal(debug.chatTasksLabel(t, 11), '11 задач Артели')
-  assert.equal(debug.chatTasksLabel(t, 21), '21 задача Артели')
-  assert.equal(debug.chatTasksLabel(t, 22), '22 задачи Артели')
+  assert.equal(debug.chatTasksLabel(1), '1 задача Артели')
+  assert.equal(debug.chatTasksLabel(3), '3 задачи Артели')
+  assert.equal(debug.chatTasksLabel(5), '5 задач Артели')
+  assert.equal(debug.chatTasksLabel(11), '11 задач Артели')
+  assert.equal(debug.chatTasksLabel(21), '21 задача Артели')
+  assert.equal(debug.chatTasksLabel(22), '22 задачи Артели')
   assert.equal(debug.chatBadgeLabel(t, { runCount: 3, status: 'finished' }), '3 задачи Артели · последний статус: Готово')
 
   for (const locale of ['en', 'ru', 'zh']) {
     const table = debug.dictionaries[locale]
-    for (const key of ['chats.title', 'chats.hint', 'chats.open', 'chats.tasksOne', 'chats.tasksFew', 'chats.tasksMany', 'chats.badge']) {
+    for (const key of ['chats.title', 'chats.hint', 'chats.open', 'chats.badge']) {
+      assert.equal(typeof table[key], 'string', locale + ' has ' + key)
+      assert.notEqual(table[key], key, locale + ' translates ' + key)
+    }
+    for (const category of new Intl.PluralRules(locale).resolvedOptions().pluralCategories) {
+      const key = 'chats.tasks.' + category
       assert.equal(typeof table[key], 'string', locale + ' has ' + key)
       assert.notEqual(table[key], key, locale + ' translates ' + key)
     }
@@ -2657,9 +2664,10 @@ test('all three dictionaries carry the auto-queue and factory strings', () => {
   const state = setup()
   const dictionaries = state.dictionaries['dsh-artel']
   assert.ok(dictionaries !== undefined)
-  const english = Object.keys(dictionaries.en).sort()
+  const PLURAL = /\.(zero|one|two|few|many|other)$/
+  const english = Object.keys(dictionaries.en).filter((key) => !PLURAL.test(key)).sort()
   for (const locale of ['ru', 'zh']) {
-    assert.deepEqual(Object.keys(dictionaries[locale]).sort(), english, locale + ' has every English key')
+    assert.deepEqual(Object.keys(dictionaries[locale]).filter((key) => !PLURAL.test(key)).sort(), english, locale + ' has every English key')
   }
   const queueAndFactory = english.filter((key) => key.startsWith('queue.') || key.startsWith('factory.'))
   assert.equal(queueAndFactory.length, 418, 'every queue and factory string is present')
@@ -2742,6 +2750,25 @@ test('a loaded language store follows the DSH language and switches instantly', 
   await debug.language.set('en')
   assert.equal(debug.language.get().effective, 'en')
   assert.equal(debug.language.t('surface.title'), 'Artel')
+})
+
+test('plural labels use Intl.PluralRules for each language', async () => {
+  const state = setup({ locale: 'ru' })
+  const debug = state.realm.window.__DSH_ARTEL_DEBUG__
+  state.realm.document.documentElement = { lang: 'ru' }
+  await debug.language.init()
+  assert.match(debug.chatTasksLabel(1), /задача/)
+  assert.match(debug.chatTasksLabel(3), /задачи/)
+  assert.match(debug.chatTasksLabel(5), /задач/)
+  await debug.language.set('zh')
+  assert.match(debug.chatTasksLabel(3), /任务/)
+})
+
+test('dates follow the chosen language, not the browser', () => {
+  const state = setup({ locale: 'ru' })
+  const debug = state.realm.window.__DSH_ARTEL_DEBUG__
+  state.realm.document.documentElement = { lang: 'ru' }
+  assert.equal(debug.dateLocale(), 'ru')
 })
 
 test('describeError prefers a translated error code over the host message', async () => {

@@ -260,6 +260,15 @@ test('solo run: copy, work, review and apply', async () => {
     assert.ok(feed.events.length >= 3)
     assert.ok(feed.events.some((event) => event.kind === 'assistant'))
     assert.ok(feed.events.some((event) => event.kind === 'tool'))
+
+    const firstStatus = feed.events.find((event) => event.kind === 'status')
+    const projectName = path.basename(f.projectPath)
+    assert.equal(firstStatus.key, 'feed.copy.preparing')
+    assert.deepEqual(firstStatus.params, { project: projectName })
+    assert.equal(firstStatus.text, `Preparing a copy of ${projectName}.`)
+    const legacyEvent = feed.events.find((event) => event.kind === 'assistant')
+    assert.equal(legacyEvent.key, undefined, 'an agent-authored event carries no host key')
+    assert.equal(legacyEvent.text, 'Reading src/app.js and the README.')
   } finally {
     await f.engine.dispose()
     await f.cleanup()

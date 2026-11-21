@@ -79,3 +79,13 @@ test('the generated client block matches the catalogs', () => {
   const source = fs.readFileSync(path.join(ROOT, 'lib', 'client.js'), 'utf8')
   assert.equal(replaceRegion(source, render(catalogs)), source, 'run node tools/build-locales.mjs')
 })
+
+test('the generated block inherits the line endings of the client file', () => {
+  const source = fs.readFileSync(path.join(ROOT, 'lib', 'client.js'), 'utf8')
+  const block = render(catalogs)
+  // GitHub's Windows runners check the repo out with CRLF: `--check` and this
+  // test must still see an up-to-date block there.
+  const crlf = source.replace(/\r?\n/g, '\r\n')
+  assert.equal(replaceRegion(crlf, block), crlf)
+  assert.equal(replaceRegion(source.replace(/\r\n/g, '\n'), block), source.replace(/\r\n/g, '\n'))
+})

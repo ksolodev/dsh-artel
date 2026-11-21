@@ -110,7 +110,11 @@ export function replaceRegion(source, block) {
   const lineStart = source.lastIndexOf('\n', begin) + 1
   const indent = source.slice(lineStart, begin)
   if (indent.trim() !== '') throw new Error('the generated locale block must start on its own line')
-  const aligned = block.split('\n').map((line) => line === '' ? line : indent + line).join('\n')
+  // A Windows checkout can carry CRLF into lib/client.js: the block must inherit
+  // the file's line endings, otherwise `--check` reports a stale block that is
+  // only a line-ending difference.
+  const eol = source.includes('\r\n') ? '\r\n' : '\n'
+  const aligned = block.split('\n').map((line) => line === '' ? line : indent + line).join(eol)
   return source.slice(0, lineStart) + aligned + source.slice(end + END.length)
 }
 

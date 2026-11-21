@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
-import { ArtelGit, GitError, MIN_GIT_VERSION, compareVersions, formatBytes, parseGitVersion, projectKey, repoDirFor, requireGit, worktreeRootFor } from '../lib/git.js'
+import { ArtelGit, GIT_INSTALL_URL, GitError, MIN_GIT_VERSION, compareVersions, formatBytes, gitProbeHint, parseGitVersion, probeGit, projectKey, repoDirFor, requireGit, worktreeRootFor } from '../lib/git.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -41,11 +41,36 @@ test('requireGit reports a missing or old git binary', async () => {
   const missing = await requireGit({ runner: async () => { throw new Error('spawn git ENOENT') } }).catch((error) => error)
   assert.ok(missing instanceof GitError)
   assert.equal(missing.code, 'artel/git-missing')
+  assert.equal(missing.details.reason, 'missing')
+  assert.equal(missing.details.minimum, MIN_GIT_VERSION)
+  assert.equal(missing.details.installUrl, GIT_INSTALL_URL)
 
   const old = await requireGit({ runner: async () => ({ stdout: 'git version 2.20.0\n', stderr: '' }) }).catch((error) => error)
   assert.ok(old instanceof GitError)
   assert.equal(old.code, 'artel/git-missing')
+  assert.equal(old.details.reason, 'old')
+  assert.equal(old.details.found, '2.20.0')
   assert.match(old.message, new RegExp(MIN_GIT_VERSION.replaceAll('.', '\\.')))
+})
+
+test('probeGit never throws and names the reason it failed', async () => {
+  const missing = await probeGit({ runner: async () => { throw new Error('spawn git ENOENT') } })
+  assert.deepEqual({ ok: missing.ok, reason: missing.reason, minimum: missing.minimum }, { ok: false, reason: 'missing', minimum: MIN_GIT_VERSION })
+  assert.match(gitProbeHint(missing), /Install Git/)
+  assert.ok(gitProbeHint(missing).includes(GIT_INSTALL_URL))
+
+  const unreadable = await probeGit({ runner: async () => ({ stdout: 'not a version\n', stderr: '' }) })
+  assert.equal(unreadable.ok, false)
+  assert.equal(unreadable.reason, 'unreadable')
+  assert.match(gitProbeHint(unreadable), /git --version/)
+
+  const old = await probeGit({ runner: async () => ({ stdout: 'git version 2.20.0.windows.1\n', stderr: '' }) })
+  assert.deepEqual({ ok: old.ok, reason: old.reason, version: old.version }, { ok: false, reason: 'old', version: '2.20.0' })
+  assert.match(gitProbeHint(old), /2\.20\.0/)
+
+  const good = await probeGit({ runner: async () => ({ stdout: 'git version 2.43.0\n', stderr: '' }) })
+  assert.deepEqual({ ok: good.ok, reason: good.reason, version: good.version }, { ok: true, reason: null, version: '2.43.0' })
+  assert.equal(gitProbeHint(good), '')
 })
 
 test('requireGit accepts the installed git', async () => {

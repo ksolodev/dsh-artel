@@ -238,9 +238,10 @@ function makeExec(state) {
 /**
  * Build one isolated factory fixture.
  * @param {string} name - fixture name.
+ * @param {{ gitProbe?: () => Promise<object> }} [options] - probe override.
  * @returns {Promise<object>} fixture.
  */
-async function fixture(name) {
+async function fixture(name, options = {}) {
   const root = path.join(process.cwd(), 'test', '.tmp', `factory-${name}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`)
   const projectPath = path.join(root, 'project')
   const stateDir = path.join(root, 'state')
@@ -261,6 +262,9 @@ async function fixture(name) {
     stateDir,
     tuning: { pollMs: 10, checkTimeoutMs: 5000, trackerPollMs: 10 * 60 * 1000 },
     exec: makeExec(execState),
+    // Issue #13: the git binary is a separate readiness probe from the project
+    // repository, so the stub answers it without touching the machine's git.
+    gitProbe: typeof options.gitProbe === 'function' ? options.gitProbe : async () => ({ ok: true, version: '2.40.0', minimum: '2.30.0', reason: null }),
   })
   await runner.init()
   const settled = new Set()
@@ -481,17 +485,43 @@ test('checkReadiness reports its probes and enabling needs a passing readiness',
     f.execState.gitOk = true
     const result = await f.runner.checkReadiness(boardId)
     assert.equal(result.readiness.ready, true)
+    // Issue #13: the git binary and the project repository are two checks, so a
+    // machine without git is not told to run `git init`.
     assert.deepEqual(
       result.readiness.checks.map((check) => check.id),
-      ['git', 'commit', 'engines', 'testCommand', 'preview', 'playwright'],
+      ['git', 'repo', 'commit', 'engines', 'testCommand', 'preview', 'playwright'],
     )
     assert.equal(result.readiness.checks.find((check) => check.id === 'git').ok, true)
+    assert.equal(result.readiness.checks.find((check) => check.id === 'repo').ok, true)
     assert.equal(result.board.readiness.ready, true)
     assert.ok(f.execState.calls.some((call) => call.command === 'git' && call.args.join(' ') === 'rev-parse --is-inside-work-tree'))
     assert.ok(f.execState.calls.some((call) => call.command === 'git' && call.args.join(' ') === 'rev-parse --verify HEAD'))
 
     const enabled = await f.runner.updateBoard(boardId, { enabled: true })
     assert.equal(enabled.enabled, true)
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('checkReadiness blames git, not the project, when the binary is missing', async () => {
+  const f = await fixture('readiness-no-git', {
+    gitProbe: async () => ({ ok: false, version: null, minimum: '2.30.0', reason: 'missing', detail: 'spawn git ENOENT' }),
+  })
+  try {
+    const created = await f.runner.createBoard({ projectPath: f.projectPath })
+    const result = await f.runner.checkReadiness(created.board.id)
+    const git = result.readiness.checks.find((check) => check.id === 'git')
+    const repo = result.readiness.checks.find((check) => check.id === 'repo')
+    assert.equal(git.ok, false)
+    assert.equal(git.reason, 'missing')
+    assert.match(git.hint, /Install Git/)
+    assert.equal(repo.ok, false)
+    assert.equal(repo.reason, 'no-git')
+    await assert.rejects(
+      () => f.runner.updateBoard(created.board.id, { enabled: true }),
+      (error) => error instanceof FactoryError && error.code === 'factory/not-ready' && /Install Git/.test(error.message) && !/git init/.test(error.message),
+    )
   } finally {
     await f.cleanup()
   }

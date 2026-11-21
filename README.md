@@ -184,7 +184,8 @@ of what it changed, checked and assumed.
 A finished task must pass the check before it becomes a commit on the queue's current branch (with the check
 off, it is saved on the agent's word and marked as such). A failed check sends the output back to the same
 worker for a fix, at most twice; a task that still fails is parked. Every queue has a git repository of its own
-under `stateDir/repos/`, so the project's own `.git` is never touched and a non-git project works the same way;
+under `stateDir/repos/`, so the project's own `.git` is never touched and a non-git project works the same way
+(the git binary is required, the project's repository is not);
 the next task starts from the branch tip, and each task's change is its own small commit rather than the whole
 night. The queue head shows the current branch, and **Все ветки** opens the branch modal: the graph, the
 commits with their diffs, and the apply and merge dialogs. **Применить ветку** applies the whole branch in one
@@ -247,8 +248,10 @@ Every step is written to the board and ticket journal.
 Tickets come from the **Incoming** field (title, description, files and screenshots), from GitHub issues —
 `#12`, `owner/repo#12` or the issue URL, imported through an installed and signed-in `gh` and never twice — or from trackers (GitHub,
 GitLab, Jira and Linear are polled every five minutes, with optional comment back); every board belongs to
-one project. Readiness blocks on three things: a git repository, at least one commit in it (the
-Factory diffs against it) and an engine logged in. A test command (or a suggested one), a preview command
+one project. Readiness blocks on four things: git `2.30.0` or newer on the machine, a git repository
+for the project, at least one commit in it (the Factory diffs against it) and an engine logged in;
+the git binary and the repository are reported as separate checks, so a missing git points at the
+install link and a non-repository at `git init`. A test command (or a suggested one), a preview command
 and Playwright are reported but do not block; without a usable test command the tests stage is skipped with
 a note.
 
@@ -351,7 +354,12 @@ Artel once from the chat composer.
 
 - DSH `^0.2.2-rc.1` with a Host that provides the session controller (the desktop app or `dsh web`).
 - Node `^22.19.0 || >=24` — the same runtime the Host uses.
-- No Git, no extra binaries and no global install: copies, diffs and applying are done by the plugin.
+- Git `2.30.0` or newer on the machine. The plugin ships no binaries and installs nothing, but the
+  queue keeps its versions and branches in its own repositories, save/export/revert work through git,
+  and the Factory pushes branches and opens pull requests with it. Without a usable git those features
+  are unavailable: the panel warns at open, the queue refuses the action with `artel/git-missing` and
+  the Factory readiness check names the install link. A project does not have to be a git repository
+  for a queue run, though the Factory needs one (see below).
 
 ## Configuration
 
@@ -375,8 +383,9 @@ independent-session fallback.
 
 ## Limitations
 
-- The project is copied as files, not through Git. Git metadata is not copied, and Artel does not
-  require Git to be installed.
+- The project is copied as files, not through Git: Git metadata is not copied and applying writes
+  files. The queue, save/export/revert and the Factory do need git `2.30.0` or newer on the machine
+  (see Requirements); only the copy itself never touches the project's `.git`.
 - A copy is limited to 512 MB in total and 32 MB per file. A project above the total limit is
   refused with an error instead of a partial copy; files above the per-file limit are left out of
   the copy.

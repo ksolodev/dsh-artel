@@ -4,6 +4,42 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.1] — 2026-11-21
+
+Git is now a stated requirement instead of a surprise in the middle of an
+action: the panel checks it when it opens, the docs say what needs it, and the
+Factory stops confusing a missing binary with a project that is not a
+repository (issue #13).
+
+### Added
+
+- **Git verdict at boot and at open.** `probeGit()` in `lib/git.js` reports
+  whether a usable `git` (`2.30.0` or newer) exists and why it does not
+  (`missing`, `old`, `unreadable`, with the version found). The plugin probes it
+  once at startup, logs the install hint, and answers `/api/dsh-artel/health`
+  with the same verdict; the panel reads it when it opens, shows a warning with
+  the install link and a «Проверить снова» button, and keeps opening regardless.
+- **Localized `artel/git-missing`.** The error carries
+  `details {reason, found, minimum, installUrl}` and `describeError` words it in
+  en/ru/zh instead of showing the Host's English message; a failed queue action
+  now says what to install or upgrade and that the session needs a restart.
+- **Separate readiness checks for the binary and the repository.** Readiness has
+  `git` and `repo` rows (then `commit`, `engines`, `testCommand`, `preview`,
+  `playwright`), with their own hints: install/upgrade git versus `git init` in
+  the project. When git itself is missing only the git problem is reported, so
+  nobody is told to run `git init` on a machine without git.
+
+### Fixed
+
+- **README no longer claims «No Git».** Requirements list git `2.30.0` or newer
+  and what depends on it (queue versions and branches, save/export/revert, the
+  Factory); the limitations explain that only the copy itself avoids the
+  project's `.git`, and the readiness paragraph in README and all three guides
+  matches the new checks.
+- **Readiness labels and hints are translated in the panel.** The card renders
+  them by check id with the Host's text as fallback, so a newer server with an
+  unknown check still shows something sensible.
+
 ## [0.13.0] — 2026-11-21
 
 Queue history can now leave the app: a branch is exported into the project's own

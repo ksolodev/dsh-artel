@@ -316,6 +316,23 @@ test('health reports the version and the diagnostics', async () => {
   assert.equal(response.body.ok, true)
   assert.equal(response.body.version, '0.1.0')
   assert.deepEqual(response.body.diagnostics, { clientModuleRowPresent: true })
+  assert.equal('git' in response.body, false, 'no git status when the Host did not wire one')
+})
+
+test('health carries the git verdict so the panel can warn at open (issue #13)', async () => {
+  const probe = { ok: false, version: null, minimum: '2.30.0', reason: 'missing', detail: 'spawn git ENOENT' }
+  const { webServer } = setup({ gitStatus: async () => probe })
+  const response = await call(webServer.routes, `${API_PREFIX}/health`)
+  assert.equal(response.status, 200)
+  assert.deepEqual(response.body.git, probe)
+
+  const broken = setup({ gitStatus: async () => { throw new Error('probe crashed') } })
+  const failed = await call(broken.webServer.routes, `${API_PREFIX}/health`)
+  assert.equal(failed.status, 200)
+  assert.equal(failed.body.ok, true, 'a failing probe must not take the health route down')
+  assert.equal(failed.body.git.ok, false)
+  assert.equal(failed.body.git.reason, 'unreadable')
+  assert.match(failed.body.git.detail, /probe crashed/)
 })
 
 test('run detail returns one run and one awaited feed page', async () => {

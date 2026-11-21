@@ -583,6 +583,10 @@ function createRealm(options = {}) {
       if (result !== undefined) return result
     }
     if (pathname === '/api/dsh-artel/project') return json(scenario.project ?? DEFAULT_PROJECT)
+    // Issue #13: the panel reads the git verdict once when it opens.
+    if (pathname === '/api/dsh-artel/health') {
+      return json({ ok: true, version: '0.1.0', git: scenario.git ?? { ok: true, version: '2.43.0', minimum: '2.30.0', reason: null } })
+    }
     // Issue #11: the project-chat index used by the rail block and the badge.
     if (pathname === '/api/dsh-artel/chats') return json({ chats: scenario.chats ?? [] })
     if (pathname === '/api/dsh-artel/models') {
@@ -1984,8 +1988,8 @@ test('all three dictionaries carry the Conductor and Fusion mode and role labels
       assert.equal(dictionaries[locale]?.[key], expected[locale][key], locale + ' has ' + key)
     }
   }
-  assert.equal(state.report.version, '0.13.0', 'the diagnostics report carries the release version')
-  assert.equal(state.realm.window.__DSH_ARTEL_DEBUG__.version, '0.13.0')
+  assert.equal(state.report.version, '0.13.1', 'the diagnostics report carries the release version')
+  assert.equal(state.realm.window.__DSH_ARTEL_DEBUG__.version, '0.13.1')
 })
 
 test('modeLabel, agentProgress and agentRole know the conductor', () => {
@@ -2643,7 +2647,7 @@ test('all three dictionaries carry the auto-queue and factory strings', () => {
     assert.deepEqual(Object.keys(dictionaries[locale]).sort(), english, locale + ' has every English key')
   }
   const queueAndFactory = english.filter((key) => key.startsWith('queue.') || key.startsWith('factory.'))
-  assert.equal(queueAndFactory.length, 228, 'every queue and factory string is present')
+  assert.equal(queueAndFactory.length, 245, 'every queue and factory string is present')
   const expected = {
     en: {
       'queue.title': 'Waiting',
@@ -2746,6 +2750,58 @@ test('queue and factory view-model helpers are exposed on the debug bridge', () 
   assert.equal(debug.factoryHelpers.selectionKey({ provider: 'test', model: 'fast' }), 'test/fast')
   assert.deepEqual(debug.factoryHelpers.selectionOfKey('test/fast'), { provider: 'test', model: 'fast' })
   assert.equal(typeof debug.factoryHelpers.clockLabel('2026-01-01T10:05:00.000Z'), 'string')
+
+  // Issue #13: readiness labels and hints are rendered by id, so the git binary
+  // and the project repository read differently in the panel's language.
+  assert.deepEqual(
+    debug.factoryHelpers.readinessCheckText(ruT, { id: 'repo', ok: false, blocking: true, reason: 'no-git', label: 'Git repository', hint: 'Git is needed before the project repository can be checked.' }),
+    { label: 'Git-репозиторий', hint: 'Без git репозиторий проекта не проверить.' },
+  )
+  assert.equal(debug.factoryHelpers.readinessCheckText(ruT, { id: 'commit', ok: true, label: 'First commit', hint: 'Make at least one commit.' }).hint, null)
+  assert.equal(debug.factoryHelpers.readinessCheckText(ruT, { id: 'commit', ok: false, label: 'First commit', hint: 'Make at least one commit.' }).hint, 'Сделайте хотя бы один коммит: «Фабрика» сравнивает с ним.')
+  assert.equal(debug.factoryHelpers.readinessCheckText(ruT, { id: 'custom', ok: false, label: 'Custom', hint: 'Server hint' }).hint, 'Server hint', 'an unknown check keeps the server wording')
+  assert.match(debug.factoryHelpers.readinessCheckText(ruT, { id: 'git', ok: false, reason: 'old', found: '2.20.0', label: 'Git', hint: 'Upgrade Git.' }).hint, /2\.20\.0/)
+})
+
+test('a missing git is explained in the panel language and can be re-checked (issue #13)', async () => {
+  const state = setup({ scenario: { git: { ok: false, version: '2.20.0', minimum: '2.30.0', reason: 'old' } } })
+  const realm = state.realm
+  const debug = realm.window.__DSH_ARTEL_DEBUG__
+  const t = state.ctx.locale.bind('dsh-artel')
+  const rechecked = []
+  const store = { loadGit: async (options) => { rechecked.push(options) } }
+
+  const banner = await realm.renderer.mount(debug.GitBanner, {
+    t,
+    store,
+    snap: { git: { ok: false, version: '2.20.0', minimum: '2.30.0', reason: 'old' }, gitLoading: false },
+  })
+  assert.equal(banner.props['data-git-reason'], 'old')
+  assert.equal(textOf(findByClass(banner, 'dsh-artel-banner__title')).trim(), 'Git не готов')
+  const text = textOf(findByClass(banner, 'dsh-artel-banner__text'))
+  assert.match(text, /2\.20\.0/)
+  assert.match(text, /2\.30\.0/)
+  assert.equal(findByClass(banner, 'dsh-artel-banner__link').props.href, 'https://git-scm.com/downloads')
+  findByClass(banner, 'dsh-artel-btn').props.onClick()
+  await realm.settle()
+  assert.deepEqual(rechecked, [{ silent: false }], 'the recheck button asks the Host again')
+
+  assert.equal(await realm.renderer.mount(debug.GitBanner, { t, store, snap: { git: { ok: true, version: '2.43.0', reason: null } } }), null, 'a usable git paints no banner')
+  assert.equal(await realm.renderer.mount(debug.GitBanner, { t, store, snap: { git: null } }), null, 'before the health answer nothing is claimed')
+
+  // The same failure reaches the user through the store's error banner when a
+  // queue action fails, so describeError words it instead of the Host's English.
+  assert.equal(debug.describeError({ code: 'artel/git-missing', message: 'Artel needs git', details: { reason: 'missing' } }, t), '«Артели» нужен Git (2.30.0 или новее): установите его и перезапустите сессию.')
+  assert.equal(debug.describeError({ code: 'artel/git-missing', details: { reason: 'old', found: '2.20.0', minimum: '2.30.0' } }, t), '«Артели» нужен Git 2.30.0 или новее, а на этой машине 2.20.0. Обновите Git и перезапустите сессию.')
+  assert.equal(debug.describeError({ code: 'artel/git-missing', details: { reason: 'unreadable' } }, t), 'Не удалось прочитать версию git. Проверьте «git --version» в терминале и перезапустите сессию.')
+
+  // The store reads the verdict from the Host and publishes it for the banner.
+  const artelStore = debug.createArtelStore('sess-1', t)
+  const git = await artelStore.loadGit({ silent: true })
+  assert.equal(git.reason, 'old')
+  assert.equal(artelStore.getSnapshot().git.reason, 'old')
+  assert.equal(artelStore.getSnapshot().gitLoaded, true)
+  assert.equal(artelStore.getSnapshot().gitLoading, false)
 })
 
 test('the new-session screen queues a task and flips «Автоочередь»', async () => {

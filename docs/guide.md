@@ -293,7 +293,8 @@ it changed, checked and assumed.
 A finished task must pass the check before it becomes a commit on the queue's current branch. A failed check
 is sent back to the same worker as a fix attempt, at most twice; the task then either passes and is committed,
 or is parked. The queue keeps its history in a git repository of its own under `stateDir/repos/`, so the
-project's `.git` is never touched and a non-git project works the same way; the next task starts from the
+project's `.git` is never touched and a non-git project works the same way (the machine still needs git
+`2.30.0` or newer, like the Factory); the next task starts from the
 branch tip, and each task's change is its own small commit, not the whole night. The queue head shows the
 current branch, and **Все ветки** opens the branch modal — the graph, the commits with their diffs, and the
 apply and merge dialogs. **Применить ветку** applies the whole branch in one action; unticking a commit
@@ -332,8 +333,10 @@ create a board for the project with **Create a board**, and switch it on with **
 be enabled after **Check readiness** passes. A paused board stops taking new tickets:
 **Pause** stops new tickets while started ones finish, **Resume** returns it.
 
-Readiness blocks on three things: the project is a git repository, it has at least one commit (the Factory
-diffs against it) and at least one engine is logged in. A test command (or the project's suggested one), a
+Readiness blocks on four things: git `2.30.0` or newer is installed, the project is a git repository, it
+has at least one commit (the Factory diffs against it) and at least one engine is logged in. The binary and
+the repository are separate rows, so a machine without git shows the install link instead of suggesting
+`git init`. A test command (or the project's suggested one), a
 preview command and Playwright are reported in the list but do not block. If no test command is
 configured, the board's check command and then the suggested one are used; without a usable command the
 tests stage is skipped with a note.

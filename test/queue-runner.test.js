@@ -287,6 +287,8 @@ test('queue summary reports counts and progress, addTasks fills the queue', asyn
     assert.equal(empty.counts.total, 0)
     assert.equal(empty.autopilot, false)
     assert.equal(empty.progress.text, 'В очереди · 0')
+    assert.equal(empty.progress.key, 'queue.progress.queued')
+    assert.deepEqual(empty.progress.params, { queued: 0 })
 
     const added = await f.runner.addTasks({
       sessionId: 's1',
@@ -304,6 +306,8 @@ test('queue summary reports counts and progress, addTasks fills the queue', asyn
     )
     assert.equal(added.queue.tasks[0].mode, 'swarm')
     assert.equal(added.queue.progress.text, 'В очереди · 3')
+    assert.equal(added.queue.progress.key, 'queue.progress.queued')
+    assert.deepEqual(added.queue.progress.params, { queued: 3 })
 
     const prepended = await f.runner.addTasks({ sessionId: 's1', projectPath: f.projectPath, texts: ['First now'], prepend: true })
     assert.equal(prepended.added, 1)
@@ -378,6 +382,8 @@ test('setAutopilot starts the pump with autoqueue and no base version', async ()
     const summary = await f.summary()
     assert.equal(summary.progress.running, true)
     assert.match(summary.progress.text, /^Автоочередь идёт · 0 из 1$/)
+    assert.equal(summary.progress.key, 'queue.progress.auto')
+    assert.deepEqual(summary.progress.params, { done: 0, total: 1 })
   } finally {
     await f.cleanup()
   }
@@ -473,6 +479,19 @@ test('a passing check marks the task passed, saves the version and continues', a
     assert.equal(summary.lastVersion.path, first.copyPath)
     assert.equal(summary.counts.passed, 1)
 
+    const passedEvent = await waitFor(async () => {
+      const current = await f.summary()
+      return current.events.find((event) => event.kind === 'passed') ?? null
+    })
+    assert.equal(passedEvent.key, passedEvent.params.commit === '' ? 'queue.event.passed' : 'queue.event.passed.commit')
+    assert.equal(passedEvent.params.title, 'First task')
+    assert.equal(passedEvent.params.count, 1)
+    assert.equal(typeof passedEvent.params.commit, 'string')
+    assert.equal(passedEvent.text.startsWith('Версия готова: First task · 1 файл(ов)'), true)
+    assert.ok(summary.events.some((event) => event.key === 'queue.event.autopilot-on'))
+    assert.ok(summary.events.some((event) => event.key === 'queue.event.check-command'))
+    assert.ok(summary.events.some((event) => event.key === 'queue.event.started'))
+
     const second = await waitFor(() => f.engine.findCall('start')[1])
     assert.equal(second.request.task, 'Second task')
     assert.equal(second.request.basePath, first.copyPath)
@@ -509,6 +528,8 @@ test('a failing check asks for repairs and parks the task after two fixes', asyn
       return summary.tasks[0].status === 'parked' ? summary.tasks[0] : null
     })
     assert.match(task.reason, /после 2 починок/)
+    assert.equal(task.reasonKey, 'queue.reason.check-failed')
+    assert.deepEqual(task.reasonParams, { count: 2 })
     assert.equal(task.fixes, 2)
     assert.equal(f.engine.findCall('interrupt').length, 1)
     assert.equal(f.engine.findCall('message').length, 2)
@@ -539,6 +560,7 @@ test('a first question gets the auto-answer, a second one parks the task', async
       return summary.tasks[0].status === 'parked' ? summary.tasks[0] : null
     })
     assert.match(task.reason, /второй вопрос/)
+    assert.equal(task.reasonKey, 'queue.reason.second-question')
     assert.equal(f.engine.findCall('interrupt')[0].runId, run.id)
   } finally {
     await f.cleanup()
@@ -559,6 +581,8 @@ test('outward text in the feed parks the task instead of shipping', async () => 
     })
     assert.match(task.reason, /наружу/)
     assert.match(task.reason, /git push/)
+    assert.equal(task.reasonKey, 'queue.reason.outward')
+    assert.match(task.reasonParams.detail, /git push/)
     assert.equal(f.engine.findCall('interrupt').length, 1)
   } finally {
     await f.cleanup()
@@ -580,6 +604,8 @@ test('a failed run with auth text finishes the queue with login-lost', async () 
     assert.equal(summary.autopilot, false)
     assert.equal(summary.tasks[0].status, 'queued')
     assert.match(summary.tasks[0].reason, /не авторизован/)
+    assert.equal(summary.tasks[0].reasonKey, 'queue.reason.login-lost')
+    assert.equal(summary.results.stopKey, 'queue.stop.login-lost')
     assert.equal(summary.results.stopReason, 'login-lost')
     assert.equal(summary.results.passed.length, 0)
   } finally {
@@ -602,6 +628,7 @@ test('a rate-limited run is requeued with retryAt and the queue continues later'
     assert.equal(waiting.autopilot, true)
     assert.equal(waiting.tasks[0].status, 'queued')
     assert.match(waiting.tasks[0].reason, /лимит/)
+    assert.equal(waiting.tasks[0].reasonKey, 'queue.reason.rate-limit')
     assert.ok(waiting.retryAt > f.clock.value)
 
     f.clock.value = waiting.retryAt + 1000
@@ -629,6 +656,8 @@ test('stop parks the running task and finishes with stopped', async () => {
     assert.equal(summary.autopilot, false)
     assert.equal(summary.tasks[0].status, 'parked')
     assert.match(summary.tasks[0].reason, /Вы остановили автоочередь/)
+    assert.equal(summary.tasks[0].reasonKey, 'queue.reason.stopped')
+    assert.equal(summary.results.stopKey, 'queue.stop.stopped')
     assert.equal(f.engine.findCall('interrupt')[0].runId, run.id)
     assert.equal(summary.results.stopReason, 'stopped')
   } finally {
@@ -712,6 +741,7 @@ test('the limit stops the pump after the allowed number of tasks', async () => {
     assert.equal(summary.counts.queued, 1)
     assert.equal(f.engine.findCall('start').length, 1)
     assert.equal(summary.results.notTaken.length, 1)
+    assert.equal(summary.results.stopKey, 'queue.stop.limit')
   } finally {
     await f.cleanup()
   }
@@ -743,6 +773,8 @@ test('three consecutive parks stop the queue with parks', async () => {
     assert.equal(summary.counts.queued, 0)
     assert.equal(f.engine.findCall('start').length, 3)
     assert.equal(summary.results.stopText.length > 0, true)
+    assert.equal(summary.results.stopKey, 'queue.stop.parks')
+    assert.equal(summary.results.stopText, 'Три задачи подряд ушли в «Отложенное».')
   } finally {
     await f.cleanup()
   }

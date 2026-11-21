@@ -10,8 +10,12 @@ import {
   createTaskRecord,
   isBranchQueue,
   queueModeRefusal,
+  queueProgress,
   queueSummary,
   resultsCard,
+  stopReasonKey,
+  stopReasonLabel,
+  taskTitle,
 } from '../lib/queue.js'
 
 test('the Orchestrator is a queue mode now; only unknown modes are refused', () => {
@@ -69,4 +73,69 @@ test('the summary and the results card expose branches and commits', () => {
   const card = resultsCard({ ...queue, results: null })
   assert.equal(card.passed[0].commit, 'c'.repeat(40))
   assert.equal(card.passed[0].branchId, queue.branches[0].id)
+})
+
+test('host strings carry catalogue keys next to their legacy text', () => {
+  assert.equal(taskTitle(''), '')
+  assert.equal(taskTitle('  \n  хвост'), '')
+  assert.equal(taskTitle('  хвост  '), 'хвост')
+
+  const auto = queueProgress({ autopilot: true, tasks: [{ status: 'passed' }, { status: 'queued' }] })
+  assert.equal(auto.key, 'queue.progress.auto')
+  assert.deepEqual(auto.params, { done: 1, total: 2 })
+  assert.equal(auto.text, 'Автоочередь идёт · 1 из 2')
+
+  const queued = queueProgress({ autopilot: false, tasks: [{ status: 'queued' }, { status: 'queued' }] })
+  assert.equal(queued.key, 'queue.progress.queued')
+  assert.deepEqual(queued.params, { queued: 2 })
+  assert.equal(queued.text, 'В очереди · 2')
+
+  assert.equal(stopReasonKey('parks'), 'queue.stop.parks')
+  assert.equal(stopReasonKey(null), null)
+  assert.equal(stopReasonKey(undefined), null)
+  assert.equal(stopReasonKey(''), null)
+  assert.equal(stopReasonLabel('parks'), 'Три задачи подряд ушли в «Отложенное».')
+})
+
+test('an auto-generated branch name is a catalogue key; an explicit one is data', () => {
+  const auto = createBranchRecord({ baseCommit: 'a'.repeat(40) })
+  assert.match(auto.name, /^Ветка [0-9a-z]{4}$/)
+  assert.equal(auto.nameKey, 'queue.branch.default')
+  assert.deepEqual(auto.nameParams, { id: auto.id.slice(2, 6) })
+
+  const named = createBranchRecord({ name: 'Ночная смена', baseCommit: 'a'.repeat(40) })
+  assert.equal(named.name, 'Ночная смена')
+  assert.equal(named.nameKey, null)
+  assert.equal(named.nameParams, null)
+})
+
+test('a parked task and the results card carry reason and stop keys', () => {
+  const queue = createQueueRecord('s1', { projectPath: 'C:\\work\\app' })
+  queue.tasks = [{
+    ...createTaskRecord({ text: 'Ночная задача' }),
+    status: 'parked',
+    reason: 'Проверка не прошла после 2 починок.',
+    reasonKey: 'queue.reason.check-failed',
+    reasonParams: { count: 2 },
+  }]
+  queue.stopReason = 'parks'
+  queue.results = null
+
+  const summary = queueSummary(queue)
+  assert.equal(summary.tasks[0].reasonKey, 'queue.reason.check-failed')
+  assert.deepEqual(summary.tasks[0].reasonParams, { count: 2 })
+
+  const card = resultsCard(queue)
+  assert.equal(card.stopKey, 'queue.stop.parks')
+  assert.deepEqual(card.stopParams, {})
+  assert.equal(card.stopText, 'Три задачи подряд ушли в «Отложенное».')
+  assert.equal(card.parked[0].reasonKey, 'queue.reason.check-failed')
+  assert.deepEqual(card.parked[0].reasonParams, { count: 2 })
+})
+
+test('an empty run gets the default stop key', () => {
+  const queue = createQueueRecord('s1', { projectPath: 'C:\\work\\app' })
+  const card = resultsCard(queue)
+  assert.equal(card.stopKey, 'queue.stop.default')
+  assert.equal(card.stopText, 'Автоочередь закончилась.')
 })

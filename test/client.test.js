@@ -2662,11 +2662,17 @@ test('all three dictionaries carry the auto-queue and factory strings', () => {
     assert.deepEqual(Object.keys(dictionaries[locale]).sort(), english, locale + ' has every English key')
   }
   const queueAndFactory = english.filter((key) => key.startsWith('queue.') || key.startsWith('factory.'))
-  assert.equal(queueAndFactory.length, 245, 'every queue and factory string is present')
+  assert.equal(queueAndFactory.length, 301, 'every queue and factory string is present')
   const expected = {
     en: {
       'queue.title': 'Waiting',
       'queue.autopilot': 'Auto-queue',
+      'queue.progress.auto': 'Auto-queue running · {done} of {total}',
+      'queue.task.title': 'Task',
+      'queue.branch.default': 'Branch {id}',
+      'queue.stop.empty': 'The queue is empty.',
+      'queue.event.started': 'Task “{title}” started',
+      'queue.reason.login-lost': 'Could not continue: the engine is not authorized.',
       'factory.title': 'Factory',
       'factory.column.checks': 'Checks',
       'factory.waiting.triageQuestions': 'Triage has questions',
@@ -2677,6 +2683,12 @@ test('all three dictionaries carry the auto-queue and factory strings', () => {
       'queue.autopilot': 'Автоочередь',
       'queue.preflight': 'Перед запуском',
       'queue.results': 'Итоги автоочереди',
+      'queue.progress.auto': 'Автоочередь идёт · {done} из {total}',
+      'queue.task.title': 'Задача',
+      'queue.branch.default': 'Ветка {id}',
+      'queue.stop.empty': 'Очередь пуста.',
+      'queue.event.started': 'Работа: {title}',
+      'queue.reason.check-failed': 'Проверка не прошла после {count} починок.',
       'factory.title': 'Фабрика',
       'factory.column.incoming': 'Входящие',
       'factory.column.working': 'Работа',
@@ -2690,6 +2702,10 @@ test('all three dictionaries carry the auto-queue and factory strings', () => {
     zh: {
       'queue.title': '等待中',
       'queue.autopilot': '自动队列',
+      'queue.progress.auto': '自动队列进行中 · {done}/{total}',
+      'queue.task.title': '任务',
+      'queue.stop.empty': '队列为空。',
+      'queue.event.started': '任务「{title}」已开始',
       'factory.title': '工厂',
       'factory.column.checks': '检查',
     },
@@ -3484,6 +3500,80 @@ test('a passed branch result shows its short commit and the apply shortcut', asy
   assert.ok(results !== undefined, 'the queue results card is rendered')
   assert.match(textOf(results), /fffffff/, 'a passed branch result shows its short commit')
   assert.match(textOf(results), /Применить ветку/, 'the result offers the branch apply shortcut')
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('host keys translate the queue progress, task titles, branch names and result reasons', async () => {
+  const keyedQueue = queueFixture({
+    model: 'branches',
+    tasks: [{
+      id: 'q-1',
+      text: 'Do the thing',
+      title: '',
+      mode: 'solo',
+      status: 'parked',
+      runId: null,
+      reason: 'legacy reason',
+      reasonKey: 'queue.reason.no-changes',
+      reasonParams: {},
+      questions: 0,
+      fixes: 0,
+      check: null,
+      changeCount: 0,
+      files: [],
+      parkedBranch: null,
+      createdAt: '2026-01-01T10:00:00.000Z',
+      startedAt: null,
+      finishedAt: null,
+    }],
+    counts: { total: 1, queued: 0, running: 0, passed: 0, parked: 1, skipped: 0, stopped: 0, done: 1, remaining: 0 },
+    progress: { key: 'queue.progress.queued', params: { queued: 1 }, text: 'legacy progress' },
+    branches: [{
+      id: 'b-1',
+      name: 'legacy branch',
+      nameKey: 'queue.branch.default',
+      nameParams: { id: 'b-1' },
+      baseCommit: 'a'.repeat(40),
+      tipCommit: null,
+      status: 'active',
+      appliedAt: null,
+    }],
+    currentBranchId: 'b-1',
+    results: {
+      at: '2026-01-01T10:00:00.000Z',
+      stopReason: 'empty',
+      stopText: 'legacy stop',
+      stopKey: 'queue.stop.empty',
+      stopParams: {},
+      startedAt: '2026-01-01T09:00:00.000Z',
+      limit: 20,
+      passed: [],
+      parked: [{ taskId: 'q-1', title: '', reason: 'legacy parked', reasonKey: 'queue.reason.no-changes', reasonParams: {}, branch: 'b-1' }],
+      notTaken: [],
+    },
+  })
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [],
+      route: ({ method, pathname }) => {
+        if (pathname === '/api/dsh-artel/queue' && method === 'GET') return reply(keyedQueue)
+        if (pathname === '/api/dsh-artel/factory' && method === 'GET') return reply({ boards: [] })
+        return undefined
+      },
+    },
+  })
+  const opened = await openArtel(state)
+  const strip = findByClass(opened, 'dsh-artel-queue')
+  const text = textOf(strip)
+  assert.match(text, /Задача/, 'an empty task title falls back to the catalogue')
+  assert.match(text, /Агент закончил и ничего не изменил\./, 'the task reason is translated')
+  assert.match(text, /В очереди · 1/, 'the progress comes from the key')
+  assert.doesNotMatch(text, /legacy progress/, 'the legacy progress text loses to the key')
+  assert.match(text, /Ветка b-1/, 'the branch name comes from the key')
+  assert.match(text, /Очередь пуста\./, 'the stop line comes from the stop key')
+  assert.doesNotMatch(text, /legacy stop/, 'the legacy stop text loses to the key')
+  assert.doesNotMatch(text, /legacy parked/, 'the parked reason comes from its key')
   state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
 })
 

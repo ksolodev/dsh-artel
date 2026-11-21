@@ -11,6 +11,8 @@
     "surface.back": "聊天",
     "surface.backTitle": "返回聊天",
     "surface.close": "关闭 Artel",
+    "language.label": "语言",
+    "language.auto": "跟随 DSH（{language}）",
     "launcher.title": "Artel",
     "launcher.open": "打开 Artel",
     "launcher.busy": "Artel 正在工作",

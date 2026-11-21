@@ -11,6 +11,8 @@
     "surface.back": "Чат",
     "surface.backTitle": "Вернуться в чат",
     "surface.close": "Закрыть «Артель»",
+    "language.label": "Язык",
+    "language.auto": "Как в DSH ({language})",
     "launcher.title": "Артель",
     "launcher.open": "Открыть «Артель»",
     "launcher.busy": "Артель работает",

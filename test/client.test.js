@@ -2732,6 +2732,16 @@ test('localized prefers a host key over legacy text', () => {
   assert.equal(debug.localized(t, { key: 'feed.copy.preparing', params: { project: 'app' }, text: 'legacy' }), 'Preparing app')
 })
 
+test('the surface header offers a language switch', async () => {
+  const state = setup({ locale: 'ru' })
+  state.realm.document.documentElement = { lang: 'ru' }
+  const surface = await openArtel(state)
+  const picker = findByClass(surface, 'dsh-artel-lang')
+  assert.ok(picker, 'language picker is rendered')
+  assert.match(textOf(picker), /Русский/)
+  assert.match(textOf(picker), /Как в DSH/)
+})
+
 test('queue and factory view-model helpers are exposed on the debug bridge', () => {
   const realm = createRealm()
   const plugin = realm.load()

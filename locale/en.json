@@ -11,6 +11,8 @@
     "surface.back": "Chat",
     "surface.backTitle": "Back to chat",
     "surface.close": "Close Artel",
+    "language.label": "Language",
+    "language.auto": "Auto ({language})",
     "launcher.title": "Artel",
     "launcher.open": "Open Artel",
     "launcher.busy": "Artel is working",

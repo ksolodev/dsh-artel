@@ -194,6 +194,69 @@ test('the next task starts from the branch tip and commits on top of the previou
   }
 })
 
+test('addTasks() puts a task on the chosen branch without switching the current one', async () => {
+  const fx = await fixture()
+  try {
+    await fx.runner.addTasks({ sessionId: 's1', projectPath: fx.projectPath, texts: ['Answer two'], mode: 'solo' })
+    const original = (await fx.store.get('s1')).branches[0]
+    const second = await fx.runner.createBranch('s1', { name: 'Second', switchTo: false })
+    assert.notEqual(second.branch.id, original.id)
+
+    await fx.runner.addTasks({
+      sessionId: 's1',
+      projectPath: fx.projectPath,
+      task: 'On branch two',
+      branchId: second.branch.id,
+    })
+    const queue = await fx.store.get('s1')
+    assert.equal(queue.tasks.length, 2)
+    assert.equal(queue.tasks[1].branchId, second.branch.id)
+    assert.equal(queue.currentBranchId, original.id)
+  } finally {
+    await fx.cleanup()
+  }
+})
+
+test('addTasks() refuses an unknown branch id and adds no task', async () => {
+  const fx = await fixture()
+  try {
+    await fx.runner.addTasks({ sessionId: 's1', projectPath: fx.projectPath, texts: ['Answer two'], mode: 'solo' })
+    const error = await fx.runner
+      .addTasks({ sessionId: 's1', projectPath: fx.projectPath, task: 'Lost', branchId: 'missing-branch' })
+      .then(() => null, (failure) => failure)
+    assert.ok(error instanceof Error)
+    assert.equal(error.status, 409)
+    assert.equal(error.code, 'artel/branch-missing')
+    assert.equal((await fx.store.get('s1')).tasks.length, 1)
+  } finally {
+    await fx.cleanup()
+  }
+})
+
+test('maintenance, revertApply and exportBranch delegate to the branch service', async () => {
+  const fx = await fixture()
+  try {
+    const maintenance = await fx.runner.maintenance('s1')
+    assert.equal(typeof maintenance.before.objects, 'number')
+    assert.equal(typeof maintenance.after.objects, 'number')
+    assert.equal(typeof maintenance.freedBytes, 'number')
+    assert.ok(maintenance.freedBytes >= 0)
+
+    const revert = await fx.runner.revertApply('s1', {}).then(() => null, (failure) => failure)
+    assert.equal(revert.status, 409)
+    assert.equal(revert.code, 'artel/nothing-to-revert')
+
+    const second = await fx.runner.createBranch('s1', { name: 'Second', switchTo: false })
+    const exported = await fx.runner
+      .exportBranch('s1', { branchId: second.branch.id })
+      .then(() => null, (failure) => failure)
+    assert.equal(exported.status, 409)
+    assert.equal(exported.code, 'artel/not-a-git-project')
+  } finally {
+    await fx.cleanup()
+  }
+})
+
 test('a branch task that changed nothing is parked and never committed', async () => {
   const fx = await fixture({ empty: true })
   try {

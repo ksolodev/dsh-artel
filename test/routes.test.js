@@ -653,6 +653,28 @@ function fakeQueueRunner() {
       calls.push({ method: 'projectState', args: [sessionId] })
       return { head: 'a'.repeat(40), branchId: 'b-1', drift: { dirty: false, files: [] } }
     },
+    async exportBranch(sessionId, input) {
+      calls.push({ method: 'exportBranch', args: [sessionId, input] })
+      return {
+        queue: { sessionId },
+        exported: { target: input?.target ?? 'refs/heads/artel/b-1', commit: 'a'.repeat(40), at: 10 },
+      }
+    },
+    async revertApply(sessionId, input) {
+      calls.push({ method: 'revertApply', args: [sessionId, input] })
+      return {
+        queue: { sessionId },
+        reverted: { branchId: input?.branchId ?? 'b-1', branchName: 'Main', commit: 'b'.repeat(40), undone: 'c'.repeat(40) },
+      }
+    },
+    async maintenance(sessionId) {
+      calls.push({ method: 'maintenance', args: [sessionId] })
+      return {
+        before: { objects: 5, sizeBytes: 4096, sizeText: '4.0 KiB' },
+        after: { objects: 4, sizeBytes: 2048, sizeText: '2.0 KiB' },
+        freedBytes: 2048,
+      }
+    },
   }
   return runner
 }
@@ -793,6 +815,34 @@ test('the queue route forwards new tasks to addTasks', async () => {
   assert.equal(noSession.body.code, 'artel/bad-request')
 })
 
+test('the queue route forwards a per-task branch id only when it is set', async () => {
+  const queueRunner = fakeQueueRunner()
+  const { webServer } = setup({ queueRunner })
+
+  const picked = await call(webServer.routes, `${API_PREFIX}/queue`, {
+    method: 'POST',
+    body: { sessionId: 's1', task: 'x', branchId: 'b2' },
+  })
+  assert.equal(picked.status, 200)
+  const pickedInput = queueRunner.calls.at(-1).args[0]
+  assert.equal(pickedInput.branchId, 'b2')
+  assert.equal(pickedInput.task, 'x')
+
+  const unchanged = await call(webServer.routes, `${API_PREFIX}/queue`, {
+    method: 'POST',
+    body: { sessionId: 's1', task: 'y' },
+  })
+  assert.equal(unchanged.status, 200)
+  assert.equal('branchId' in queueRunner.calls.at(-1).args[0], false, 'no branch choice means no branchId key')
+
+  const empty = await call(webServer.routes, `${API_PREFIX}/queue`, {
+    method: 'POST',
+    body: { sessionId: 's1', task: 'z', branchId: '' },
+  })
+  assert.equal(empty.status, 200)
+  assert.equal('branchId' in queueRunner.calls.at(-1).args[0], false, 'an empty branch id is not a choice')
+})
+
 test('the queue route accepts the Orchestrator and still refuses unknown modes', async () => {
   const queueRunner = fakeQueueRunner()
   const { webServer } = setup({ queueRunner })
@@ -888,6 +938,92 @@ test('the queue branch routes forward branch operations', async () => {
   const noSource = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1/merge`, { method: 'POST', body: { sessionId: 's1' } })
   assert.equal(noSource.status, 400)
   assert.equal(noSource.body.code, 'artel/bad-request')
+})
+
+test('the queue branch export and revert routes forward their inputs', async () => {
+  const queueRunner = fakeQueueRunner()
+  const { webServer } = setup({ queueRunner })
+
+  const exported = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1/export`, {
+    method: 'POST',
+    body: { sessionId: 's1', target: 'refs/heads/artel/custom' },
+  })
+  assert.equal(exported.status, 200)
+  assert.equal(exported.body.exported.target, 'refs/heads/artel/custom')
+  assert.deepEqual(queueRunner.calls.at(-1), {
+    method: 'exportBranch',
+    args: ['s1', { branchId: 'b-1', target: 'refs/heads/artel/custom' }],
+  })
+
+  const automatic = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1/export`, {
+    method: 'POST',
+    body: { sessionId: 's1' },
+  })
+  assert.equal(automatic.status, 200)
+  assert.deepEqual(queueRunner.calls.at(-1), {
+    method: 'exportBranch',
+    args: ['s1', { branchId: 'b-1', target: null }],
+  })
+
+  const reverted = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1/revert`, {
+    method: 'POST',
+    body: { sessionId: 's1' },
+  })
+  assert.equal(reverted.status, 200)
+  assert.equal(reverted.body.reverted.branchId, 'b-1')
+  // Revert refuses drift instead of overriding it: no force flag is forwarded.
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'revertApply', args: ['s1', { branchId: 'b-1' }] })
+
+  const noSession = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1/revert`, { method: 'POST', body: {} })
+  assert.equal(noSession.status, 400)
+  assert.equal(noSession.body.code, 'artel/bad-request')
+
+  const wrongExport = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1/export`)
+  assert.equal(wrongExport.status, 405)
+  const wrongRevert = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1/revert`)
+  assert.equal(wrongRevert.status, 405)
+})
+
+test('the queue maintenance route runs the cleanup for the session', async () => {
+  const queueRunner = fakeQueueRunner()
+  const { webServer } = setup({ queueRunner })
+  const response = await call(webServer.routes, `${API_PREFIX}/queue/maintenance`, {
+    method: 'POST',
+    body: { sessionId: 's1' },
+  })
+  assert.equal(response.status, 200)
+  assert.equal(response.body.freedBytes, 2048)
+  assert.equal(response.body.before.objects, 5)
+  assert.equal(response.body.after.objects, 4)
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'maintenance', args: ['s1'] })
+
+  const noSession = await call(webServer.routes, `${API_PREFIX}/queue/maintenance`, { method: 'POST', body: {} })
+  assert.equal(noSession.status, 400)
+  assert.equal(noSession.body.code, 'artel/bad-request')
+
+  const wrongMethod = await call(webServer.routes, `${API_PREFIX}/queue/maintenance`)
+  assert.equal(wrongMethod.status, 405)
+  assert.equal(wrongMethod.body.code, 'artel/method')
+})
+
+test('an export error keeps its status, code and details in the JSON body', async () => {
+  const queueRunner = fakeQueueRunner()
+  queueRunner.exportBranch = async () => {
+    const error = new Error('The target ref already exists.')
+    error.status = 409
+    error.code = 'artel/export-exists'
+    error.details = { target: 'refs/heads/artel/b1' }
+    throw error
+  }
+  const { webServer } = setup({ queueRunner })
+  const response = await call(webServer.routes, `${API_PREFIX}/queue/branches/b1/export`, {
+    method: 'POST',
+    body: { sessionId: 's1' },
+  })
+  assert.equal(response.status, 409)
+  assert.equal(response.body.error, 'The target ref already exists.')
+  assert.equal(response.body.code, 'artel/export-exists')
+  assert.deepEqual(response.body.details, { target: 'refs/heads/artel/b1' })
 })
 
 test('a branch error keeps its status, code and details in the JSON body', async () => {

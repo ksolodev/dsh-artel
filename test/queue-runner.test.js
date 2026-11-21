@@ -724,8 +724,9 @@ test('three consecutive parks stop the queue with parks', async () => {
     await f.runner.setAutopilot({ sessionId: 's1', projectPath: f.projectPath, autopilot: true, checkCommand: 'node -e "process.exit(0)"' })
 
     for (let index = 0; index < 3; index += 1) {
-      await waitFor(() => f.engine.findCall('start')[index])
-      const run = f.engine.started[index]
+      // started[] is filled after the call is recorded, so wait for the run
+      // itself instead of the call log before reading its id.
+      const run = await waitFor(() => f.engine.started[index])
       f.engine.setChanges(run.id, [])
       f.engine.setStatus(run.id, 'finished', { changeCount: 0 })
       await waitFor(async () => {

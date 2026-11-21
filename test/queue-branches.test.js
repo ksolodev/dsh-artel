@@ -128,7 +128,11 @@ async function fixture({ empty = false } = {}) {
      */
     cleanup: async () => {
       runner.dispose()
-      await fs.rm(root, { recursive: true, force: true })
+      // A pump tick can still be writing under state/queue when dispose()
+      // returns, so Windows may report ENOTEMPTY while the tree is removed.
+      await fs
+        .rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+        .catch(() => {})
     },
   }
 }

@@ -141,6 +141,18 @@ test('remove deletes a run and its feed', async () => {
   await fs.rm(dir, { recursive: true, force: true })
 })
 
+test('a feed append does not overwrite a concurrent status patch', async () => {
+  const { store, dir } = await freshStore('feed-race')
+  const run = makeRun()
+  await store.add(run)
+  await store.patch(run.id, { status: 'running' })
+  const appending = store.appendFeed(run.id, [{ kind: 'status', text: 'working' }])
+  await store.patch(run.id, { status: 'waiting' })
+  await appending
+  assert.equal(store.get(run.id).status, 'waiting', 'the status patch survives the feed append')
+  await fs.rm(dir, { recursive: true, force: true })
+})
+
 test('newRunId is unique-ish and readable', () => {
   const ids = new Set(Array.from({ length: 200 }, () => newRunId()))
   assert.equal(ids.size, 200)

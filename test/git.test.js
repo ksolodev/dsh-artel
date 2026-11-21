@@ -81,6 +81,15 @@ function normalisePath(value) {
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved
 }
 
+/**
+ * Resolve Windows 8.3 short names before comparing: os.tmpdir() can hand back
+ * `RUNNER~1` while git reports the long `runneradmin` path, and both name the
+ * same directory.
+ */
+async function normaliseRealPath(value) {
+  return normalisePath(await fs.realpath(value))
+}
+
 test('init creates an app repo without touching the project', async () => {
   const stateDir = await tempDir('artel-state-')
   const project = await makeProject()
@@ -343,7 +352,7 @@ test('userRepoRoot finds the user work tree and creates nothing', async () => {
   const git = await ArtelGit.init({ stateDir, projectPath: project })
   const root = await git.userRepoRoot()
   assert.notEqual(root, null)
-  assert.equal(normalisePath(root), normalisePath(project))
+  assert.equal(await normaliseRealPath(root), await normaliseRealPath(project))
   assert.equal(await projectStatus(project), '')
 })
 

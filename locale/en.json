@@ -860,6 +860,7 @@
     "factory.error.issue-unavailable": "Could not read the issue through `gh`: {detail}",
     "factory.error.bad-settings": "The factory settings are invalid: {problems}",
     "factory.error.bad-tracker": "Ticket intake: {problems}",
+    "factory.error.bad-project": "The project folder was not found: {path}",
     "factory.error.not-ready": "The factory cannot be enabled: {problems}",
     "factory.error.empty-ticket": "Describe the ticket: a title or a text.",
     "factory.error.duplicate-ticket": "This ticket is already open: #{number}.",

@@ -1236,6 +1236,10 @@ test('the factory route lists, creates and views boards', async () => {
   assert.equal(missing.status, 400)
   assert.equal(missing.body.error, 'projectPath is required')
 
+  const blank = await call(webServer.routes, `${API_PREFIX}/factory`, { method: 'POST', body: { projectPath: '   ' } })
+  assert.equal(blank.status, 400)
+  assert.equal(blank.body.error, 'projectPath is required')
+
   const created = await call(webServer.routes, `${API_PREFIX}/factory`, { method: 'POST', body: { projectPath: 'C:\\work\\app', name: 'Demo' } })
   assert.equal(created.status, 200)
   assert.equal(created.body.board.id, 'b-1')

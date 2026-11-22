@@ -255,7 +255,7 @@ async function fixture(name, options = {}) {
   const engine = new FakeEngine({ copyRoot })
   const store = new QueueStore({ dir: path.join(stateDir, 'queue') })
   await store.init()
-  const runner = new QueueRunner({ engine, store, stateDir, copyRoot, now: () => clock.value, tuning: { pollMs: 10, checkTimeoutMs: 5000 } })
+  const runner = new QueueRunner({ engine, store, stateDir, copyRoot, log: options.log ?? {}, now: () => clock.value, tuning: { pollMs: 10, checkTimeoutMs: 5000 } })
   return {
     root,
     projectPath,
@@ -331,6 +331,25 @@ test('queue summary reports counts and progress, addTasks fills the queue', asyn
     const none = await f.runner.addTasks({ sessionId: 's1', projectPath: f.projectPath, texts: [], task: '   ' })
     assert.equal(none.added, 0)
     assert.equal(none.queue.counts.total, 5)
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('init keeps a queue whose run copy is gone idle instead of warning', async () => {
+  const warnings = []
+  const infos = []
+  const f = await fixture('stale-copy', {
+    log: { warn: (line) => warnings.push(line), info: (line) => infos.push(line) },
+  })
+  try {
+    const copyPath = path.join(f.copyRoot, 'run-1')
+    await fs.mkdir(copyPath, { recursive: true })
+    await f.runner.addTasks({ sessionId: 's1', projectPath: copyPath, texts: ['Ship it'] })
+    await fs.rm(copyPath, { recursive: true, force: true })
+    await f.runner.init()
+    assert.deepEqual(warnings, [], 'a swept-away copy is not a startup failure')
+    assert.ok(infos.some((line) => line.includes('stays idle')), 'the skip is explained once')
   } finally {
     await f.cleanup()
   }
@@ -566,6 +585,33 @@ test('a failing check asks for repairs and parks the task after two fixes', asyn
     assert.equal(task.fixes, 2)
     assert.equal(f.engine.findCall('interrupt').length, 1)
     assert.equal(f.engine.findCall('message').length, 2)
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('a run that finishes without changes parks without interrupting it', async () => {
+  const f = await fixture('no-changes')
+  try {
+    await f.runner.addTasks({ sessionId: 's1', projectPath: f.projectPath, texts: ['Look around the project'] })
+    await f.runner.setAutopilot({
+      sessionId: 's1',
+      projectPath: f.projectPath,
+      autopilot: true,
+      checkCommand: 'node -e "process.exit(0)"',
+    })
+    const run = await waitFor(() => f.engine.started[0])
+
+    f.engine.setChanges(run.id, [])
+    f.engine.setStatus(run.id, 'finished', { changeCount: 0 })
+    const task = await waitFor(async () => {
+      const summary = await f.summary()
+      return summary.tasks[0].status === 'parked' ? summary.tasks[0] : null
+    })
+    assert.equal(task.reasonKey, 'queue.reason.no-changes')
+    // Interrupting an already idle run appends a misleading «You stopped the
+    // run» event, so the park must not touch the engine.
+    assert.equal(f.engine.findCall('interrupt').length, 0)
   } finally {
     await f.cleanup()
   }

@@ -858,6 +858,7 @@
     "factory.error.issue-unavailable": "无法通过 `gh` 读取 issue：{detail}",
     "factory.error.bad-settings": "工厂设置无效：{problems}",
     "factory.error.bad-tracker": "工单接收：{problems}",
+    "factory.error.bad-project": "未找到项目文件夹：{path}",
     "factory.error.not-ready": "无法启用工厂：{problems}",
     "factory.error.empty-ticket": "请描述工单：标题或正文。",
     "factory.error.duplicate-ticket": "该工单已打开：#{number}。",

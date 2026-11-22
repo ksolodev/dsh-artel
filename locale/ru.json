@@ -862,6 +862,7 @@
     "factory.error.issue-unavailable": "Не удалось прочитать issue через `gh`: {detail}",
     "factory.error.bad-settings": "Настройки фабрики некорректны: {problems}",
     "factory.error.bad-tracker": "Приём тикетов: {problems}",
+    "factory.error.bad-project": "Папка проекта не найдена: {path}",
     "factory.error.not-ready": "Фабрику нельзя включить: {problems}",
     "factory.error.empty-ticket": "Опишите тикет: заголовок или текст.",
     "factory.error.duplicate-ticket": "Этот тикет уже открыт: #{number}.",

@@ -1952,6 +1952,78 @@ test('sandboxMode is forwarded to the solo agent', async () => {
   }
 })
 
+test('a run started from an Artel task chat writes its copy', async () => {
+  const f = await fixture('start-task-chat-sandbox')
+  try {
+    await f.store.add({
+      id: 'run-task-chat',
+      sessionId: 'session-task-9',
+      originSessionId: 's1',
+      projectPath: f.projectPath,
+      task: 'Earlier step',
+      status: 'applied',
+      mode: 'solo',
+      taskChat: true,
+      chatTitle: 'Artel · Earlier step',
+      createdAt: 1,
+      updatedAt: 2,
+    })
+    const run = await f.engine.start({
+      sessionId: 'session-task-9',
+      projectPath: f.projectPath,
+      mode: 'solo',
+      task: 'Next step',
+      autoqueue: true,
+    })
+    assert.equal(f.driver.created.length, 1)
+    assert.equal(
+      f.driver.created[0].sandboxMode,
+      'workspace-write',
+      'the task chat is read-only, but its run works in a copy and must be able to edit it',
+    )
+    assert.equal(f.store.get(run.id).sandboxMode, 'workspace-write')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('an ordinary chat keeps the driver default sandbox', async () => {
+  const f = await fixture('start-chat-sandbox')
+  try {
+    const run = await f.engine.start({
+      sessionId: 's1',
+      projectPath: f.projectPath,
+      mode: 'solo',
+      task: 'Inspect the project',
+    })
+    assert.equal(f.driver.created[0].sandboxMode, undefined, 'no mode is invented for a normal chat')
+    assert.equal(f.store.get(run.id).sandboxMode, null)
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('a copy directory reports the project it was copied from', async () => {
+  const f = await fixture('project-of-copy')
+  try {
+    const run = await f.engine.start({
+      sessionId: 's1',
+      projectPath: f.projectPath,
+      mode: 'solo',
+      task: 'Inspect the project',
+    })
+    assert.equal(f.engine.projectPathForCopy(run.copyPath), f.projectPath, 'the copy root maps back')
+    assert.equal(f.engine.projectPathForCopy(path.join(run.copyPath, 'src')), f.projectPath, 'a directory inside the copy maps back too')
+    assert.equal(f.engine.projectPathForCopy(f.projectPath), null, 'a real project is not remapped')
+    assert.equal(f.engine.projectPathForCopy(''), null)
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
 test('orchestrator planApproval: the plan waits for approvePlan before any copy or part', async () => {
   const f = await fixture('orchestrator-plan-approval')
   try {

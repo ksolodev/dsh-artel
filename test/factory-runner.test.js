@@ -442,6 +442,13 @@ test('createBoard makes one board per project', async () => {
     const view = await f.runner.view(first.board.id)
     assert.equal(view.board.id, first.board.id)
     assert.deepEqual(view.tickets, [])
+
+    // A board of a folder that does not exist can never run, so it is refused.
+    await assert.rejects(f.runner.createBoard({ projectPath: path.join(f.projectPath, 'no-such-folder') }), (error) => {
+      assert.equal(error.code, 'factory/bad-project')
+      assert.equal(error.status, 400)
+      return true
+    })
   } finally {
     await f.cleanup()
   }
@@ -668,6 +675,9 @@ test('the happy path moves a ticket from incoming to ready', async () => {
     assert.equal(ticket.check.tests.ok, true)
     assert.equal(ticket.check.app.verdict, 'skip')
     assert.match(ticket.check.app.reason, /Playwright/)
+    const workVersion = ticket.versions.find((version) => version.runId === runs.work.id)
+    assert.equal(workVersion.title, ticket.title, 'a version carries the ticket title')
+    assert.equal(workVersion.changeCount, 1, 'a version carries the size of its own change')
     const discarded = f.engine.findCall('discard').map((call) => call.runId)
     assert.ok(discarded.includes(runs.triage.id))
     assert.ok(discarded.includes(runs.review.id))

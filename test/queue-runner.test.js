@@ -583,7 +583,10 @@ test('a failing check asks for repairs and parks the task after two fixes', asyn
     assert.equal(task.reasonKey, 'queue.reason.check-failed')
     assert.deepEqual(task.reasonParams, { count: 2 })
     assert.equal(task.fixes, 2)
-    assert.equal(f.engine.findCall('interrupt').length, 1)
+    // Parking is stored before the engine round trip, so the call itself lands
+    // one tick after the status; wait for it instead of racing it.
+    const interrupt = await waitFor(() => f.engine.findCall('interrupt')[0])
+    assert.equal(interrupt.runId, run.id)
     assert.equal(f.engine.findCall('message').length, 2)
   } finally {
     await f.cleanup()
@@ -640,7 +643,8 @@ test('a first question gets the auto-answer, a second one parks the task', async
     })
     assert.match(task.reason, /второй вопрос/)
     assert.equal(task.reasonKey, 'queue.reason.second-question')
-    assert.equal(f.engine.findCall('interrupt')[0].runId, run.id)
+    const interrupt = await waitFor(() => f.engine.findCall('interrupt')[0])
+    assert.equal(interrupt.runId, run.id)
   } finally {
     await f.cleanup()
   }
@@ -662,7 +666,8 @@ test('outward text in the feed parks the task instead of shipping', async () => 
     assert.match(task.reason, /git push/)
     assert.equal(task.reasonKey, 'queue.reason.outward')
     assert.match(task.reasonParams.detail, /git push/)
-    assert.equal(f.engine.findCall('interrupt').length, 1)
+    const interrupt = await waitFor(() => f.engine.findCall('interrupt')[0])
+    assert.equal(interrupt.runId, run.id)
   } finally {
     await f.cleanup()
   }
@@ -732,7 +737,17 @@ test('stop parks the running task and finishes with stopped', async () => {
     await f.runner.setAutopilot({ sessionId: 's1', projectPath: f.projectPath, autopilot: true, checkCommand: 'node -e "process.exit(0)"' })
     const run = await waitFor(() => f.engine.started[0])
 
+    // The engine round trip must already see the task as parked: the queue used
+    // to keep `running` in its store until interrupt() resolved, which is the
+    // window the flaky test tripped over.
+    const statusDuringInterrupt = []
+    const interrupt = f.engine.interrupt.bind(f.engine)
+    f.engine.interrupt = async (id) => {
+      statusDuringInterrupt.push(f.store.get('s1')?.tasks[0]?.status ?? null)
+      return interrupt(id)
+    }
     const summary = await f.runner.stop('s1')
+    assert.deepEqual(statusDuringInterrupt, ['parked'])
     assert.equal(summary.stopReason, 'stopped')
     assert.equal(summary.autopilot, false)
     assert.equal(summary.tasks[0].status, 'parked')

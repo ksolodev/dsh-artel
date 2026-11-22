@@ -61,6 +61,19 @@ All notable changes to this project are documented here. The format follows
   reused, and only the missing steps run, while the applied changes in the worktree are committed rather than
   refused. The factory commit carries its own `user.name`/`user.email`, so a machine without a global identity
   no longer fails the step; «Влить» finishes a ticket whose version is already applied the same way.
+- **The panel keeps its dark colours in a light Host theme (#38).** The surface background is fixed, but its
+  «Saved» marker, borders and text took `--a-*` values from Host theme tokens, which flip to dark-on-light
+  values when the Host runs a light theme: against the dark surface «Saved» measured a contrast of 1.00 and
+  the panel borders disappeared. The surface now carries its own dark palette (`color-scheme: dark`, fixed
+  accent, foreground and line colours) while fonts still follow the Host, so a light Host theme no longer
+  bleeds into the panel.
+- **Two parallel applies of one branch answer 409 instead of 500 (#39).** Both requests passed the
+  `refs/heads/applied` compare-and-swap check one after another; the loser's git error carried
+  `artel/git-ref-changed` but no HTTP status, so the route wrapper answered `500 artel/internal`. The CAS
+  failure is now a `409 artel/git-ref-changed` that the panel already localizes («Ветка изменилась во время
+  операции.»), matching the branch-busy conflicts around it. Applies and merges of the same branch that start
+  in the same millisecond also get their own worktree directory now: the two git worktrees used to collide
+  on one path and answered `500 artel/git-failed` before the ref race could even be decided.
 - **The data root follows the profile the Host runs in.** The Host half reads the profile name from the
   launcher's `profileContext` instead of relying on `DSH_PROFILE` alone, so the desktop app and `dsh web`
   use `<DSH home>/artel/<profile>` as documented. A data root left in `<DSH home>/artel/default` by an

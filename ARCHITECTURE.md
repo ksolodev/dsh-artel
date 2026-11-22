@@ -72,7 +72,9 @@ previous runs of this session.
   Enter sends, Shift+Enter is a newline). «Leave a remark» is the same box — it wakes a finished solo
   agent too.
 - **Changes**: file list with +N/−M, lazy per-file unified diff, colored with theme tokens. Refresh.
-  Empty state "no changes yet" (also the swarm phase-1 state).
+  Empty state "no changes yet" (also the swarm phase-1 state). The surface itself is always dark and uses
+  its own fixed palette (`--a-*`, `color-scheme: dark`) instead of the Host's light/dark colour tokens, so a
+  light Host theme cannot turn «Saved» or the borders invisible (#38); fonts still follow the Host.
 - **Layout**: the run column is one scroll region — feed, parts card, changes card and the queue strip
   scroll together under the fixed route/live strips, while the composer stays pinned below. The
   «Итоги автоочереди» card collapses to its title row and scrolls itself into view when a shift finishes,
@@ -303,7 +305,7 @@ then shows nothing and a direct call gets `503 artel/unavailable`).
 | DELETE | `/api/dsh-artel/queue/branches/:branchId` | `sessionId` | branch state; refuses the applied branch (`artel/branch-applied`) and a branch with live tasks (`artel/branch-busy`) |
 | POST | `/api/dsh-artel/queue/branches/:branchId/switch` | `{ sessionId }` | branch state with the new current branch |
 | GET | `/api/dsh-artel/queue/branches/:branchId/commits` | `sessionId` | `{ commits }` — newest first, only the commits over the branch base, each with its files and change count |
-| POST | `/api/dsh-artel/queue/branches/:branchId/apply` | `{ sessionId, commitIds?, confirmDrift?, checkCommand?, force? }` | `{ queue, applied, check? }` — `applied` names the landed commit, the drift commit and the files written |
+| POST | `/api/dsh-artel/queue/branches/:branchId/apply` | `{ sessionId, commitIds?, confirmDrift?, checkCommand?, force? }` | `{ queue, applied, check? }` — `applied` names the landed commit, the drift commit and the files written; a ref that moves under the action (a parallel apply or a double click) answers `409 artel/git-ref-changed` |
 | POST | `/api/dsh-artel/queue/branches/:branchId/merge` | `{ sessionId, sourceBranchId, checkCommand?, force? }` | `{ queue, mergeCommit, check? }` |
 | POST | `/api/dsh-artel/queue/branches/:branchId/export` | `{ sessionId, target? }` | `{ queue, exported }` — imports the branch into the project's own git repository as `refs/heads/artel/<branchId>` (or `target`, which must stay inside `refs/heads/artel/`); only the ref and its objects are written, its work tree and `HEAD` are untouched, and updates are never forced |
 | POST | `/api/dsh-artel/queue/branches/:branchId/revert` | `{ sessionId }` | `{ queue, reverted }` — undoes the last apply as a new commit; only the last apply and only without project drift |

@@ -253,6 +253,29 @@ test('readGitHubIssue returns the issue and no reason on success', async () => {
   assert.equal(read.issue.title, 'Fix login')
 })
 
+test('readGitHubIssue recovers the repository from the issue URL for a bare reference (#25)', async () => {
+  const { exec } = makeExec(() => ({
+    code: 0,
+    stdout: JSON.stringify({ number: 12, title: 'Fix login', url: 'https://github.com/acme/repo/issues/12', labels: [] }),
+    stderr: '',
+  }))
+  const read = await readGitHubIssue({ ref: { number: 12 }, exec })
+  assert.equal(read.reason, null)
+  assert.equal(read.issue.externalId, 'gh:acme/repo#12')
+  assert.deepEqual(read.issue.source, { kind: 'github', label: null, repo: 'acme/repo' })
+})
+
+test('readGitHubIssue keeps an unknown repository when the URL is not a GitHub issue', async () => {
+  const { exec } = makeExec(() => ({
+    code: 0,
+    stdout: JSON.stringify({ number: 3, title: 'No URL' }),
+    stderr: '',
+  }))
+  const read = await readGitHubIssue({ ref: { number: 3 }, exec })
+  assert.equal(read.issue.externalId, 'gh:-#3')
+  assert.equal(read.issue.source.repo, null)
+})
+
 test('readGitHubIssue names why a gh lookup failed', async () => {
   const cases = [
     ['spawn gh ENOENT', 'gh-missing'],

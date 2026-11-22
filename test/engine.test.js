@@ -2717,6 +2717,59 @@ test('a committed run is reviewed through git and refuses apply and discard', as
   }
 })
 
+test('a committed run reports added, deleted and binary files like a copy run (#32)', async () => {
+  const f = await fixture('committed-mixed')
+  try {
+    const git = await ArtelGit.init({ stateDir: f.stateDir, projectPath: f.projectPath })
+    const imported = await git.importProject()
+    f.engine.setGitResolver(async (projectPath) => (path.resolve(projectPath) === path.resolve(f.projectPath) ? git : null))
+
+    const seed = path.join(f.root, 'seed')
+    await fs.cp(f.projectPath, seed, { recursive: true })
+    const seedCommit = await git.commitDir(seed, { parent: imported, message: 'Seed version' })
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Mixed changes', basePath: seed, isolateFromBase: true })
+    await fs.rm(path.join(run.copyPath, 'README.md'))
+    await fs.writeFile(path.join(run.copyPath, 'qa-added.txt'), 'added text\n')
+    await fs.writeFile(path.join(run.copyPath, 'qa-binary.dat'), Buffer.from([0, 1, 2, 3]))
+    await fs.writeFile(path.join(run.copyPath, 'src', 'app.js'), 'export const answer = 3\n')
+    await f.driver.emit(f.driver.created[0], { kind: 'turn-end' })
+
+    const files = await f.engine.changes(run.id)
+    const commit = await git.commitDir(run.copyPath, { parent: seedCommit, message: 'Task: mixed changes' })
+    await f.engine.markCommitted(run.id, { branchId: 'b1', parentCommit: seedCommit, commit, files, changeCount: files.length })
+
+    const changes = await f.engine.changes(run.id)
+    const byPath = new Map(changes.map((change) => [change.path, change]))
+    assert.equal(byPath.get('README.md').status, 'deleted', 'a deleted file stays deleted in the commit')
+    assert.equal(byPath.get('qa-added.txt').status, 'added', 'an added file stays added in the commit')
+    assert.equal(byPath.get('src/app.js').status, 'modified')
+    assert.equal(byPath.get('qa-binary.dat').binary, true, 'the commit range exposes the binary flag')
+    assert.ok(['added', 'binary'].includes(byPath.get('qa-binary.dat').status))
+    assert.deepEqual(byPath.get('README.md').hunks, [], 'a committed change is reviewed through git')
+
+    const deleted = await f.engine.fileDiff(run.id, 'README.md')
+    assert.equal(deleted.status, 'deleted')
+    assert.match(deleted.before, /# Demo/)
+    assert.equal(deleted.after, '')
+
+    const added = await f.engine.fileDiff(run.id, 'qa-added.txt')
+    assert.equal(added.status, 'added')
+    assert.equal(added.before, '')
+    assert.match(added.after, /added text/)
+
+    const binary = await f.engine.fileDiff(run.id, 'qa-binary.dat')
+    assert.equal(binary.status, 'added', 'an added binary file is reported, not a 404')
+    assert.equal(binary.binary, true)
+    assert.deepEqual(binary.hunks, [])
+
+    const missing = (error) => error instanceof ArtelError && error.status === 404 && error.code === 'artel/unknown-file'
+    await assert.rejects(() => f.engine.fileDiff(run.id, 'nope.txt'), missing, 'a path in neither tree is still a 404')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
 test('fileDiff refuses paths outside the run copy', async () => {
   const f = await fixture('diff-path')
   try {

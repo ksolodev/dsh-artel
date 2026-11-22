@@ -2692,6 +2692,19 @@ test('fileDiff refuses paths outside the run copy', async () => {
   }
 })
 
+test('fileDiff answers 404 for a path the run never had (#28)', async () => {
+  const f = await fixture('diff-missing')
+  try {
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Change the answer' })
+    const missing = (error) => error instanceof ArtelError && error.status === 404 && error.code === 'artel/unknown-file'
+    await assert.rejects(() => f.engine.fileDiff(run.id, 'nope.txt'), missing, 'a missing top-level file is a 404')
+    await assert.rejects(() => f.engine.fileDiff(run.id, 'src/deep/nope.txt'), missing, 'a missing nested file is a 404')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
 test('markApplied refuses a run without a branch commit', async () => {
   const f = await fixture('mark-applied-uncommitted')
   try {

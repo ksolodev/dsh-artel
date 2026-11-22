@@ -4,7 +4,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { QueueRunner } from '../lib/queue-runner.js'
-import { QueueStore } from '../lib/queue.js'
+import { MAX_QUEUE_TASKS, QueueStore } from '../lib/queue.js'
 import { autoAnswerPrompt } from '../lib/prompts.js'
 
 /**
@@ -836,6 +836,38 @@ test('finishAfterCurrent lets the running task settle before finishing', async (
     })
     assert.equal(summary.tasks[0].status, 'passed')
     assert.equal(summary.tasks[0].runId, run.id)
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('the queue rejects edits that cannot change anything', async () => {
+  const f = await fixture('contracts')
+  try {
+    await f.runner.addTasks({ sessionId: 's1', projectPath: f.projectPath, texts: ['Waiting'] })
+    const task = f.store.get('s1').tasks[0]
+    await assert.rejects(
+      () => f.runner.retryTask('s1', task.id),
+      (error) => error.status === 409 && error.code === 'queue/task-not-retryable',
+    )
+    await assert.rejects(
+      () => f.runner.postponeVersion('s1', 'missing-run'),
+      (error) => error.status === 404 && error.code === 'queue/unknown-run',
+    )
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('bulk add refuses to grow the queue past the task limit', async () => {
+  const f = await fixture('bulk-limit')
+  try {
+    const texts = Array.from({ length: MAX_QUEUE_TASKS + 1 }, (_, index) => `Task ${index}`)
+    await assert.rejects(
+      () => f.runner.addTasks({ sessionId: 's1', projectPath: f.projectPath, texts }),
+      (error) => error.status === 409 && error.code === 'queue/full',
+    )
+    assert.equal(f.store.get('s1').tasks.length, 0, 'a refused bulk add must not create tasks')
   } finally {
     await f.cleanup()
   }

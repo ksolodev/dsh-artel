@@ -1201,6 +1201,12 @@ test('the queue task and version sub-routes forward ids and verbs', async () => 
   await call(webServer.routes, `${API_PREFIX}/queue/tasks/t-1/move`, { method: 'POST', body: { sessionId: 's1', direction: 'down' } })
   assert.deepEqual(queueRunner.calls.at(-1), { method: 'moveTask', args: ['s1', 't-1', { direction: 'down' }] })
 
+  const beforeInvalidDirection = queueRunner.calls.length
+  const badDirection = await call(webServer.routes, `${API_PREFIX}/queue/tasks/t-1/move`, { method: 'POST', body: { sessionId: 's1', direction: 'sideways' } })
+  assert.equal(badDirection.status, 400)
+  assert.equal(badDirection.body.code, 'artel/bad-request')
+  assert.equal(queueRunner.calls.length, beforeInvalidDirection, 'an invalid direction must not reach the runner')
+
   await call(webServer.routes, `${API_PREFIX}/queue/tasks/t-1?sessionId=s1`, { method: 'DELETE' })
   assert.deepEqual(queueRunner.calls.at(-1), { method: 'removeTask', args: ['s1', 't-1'] })
 

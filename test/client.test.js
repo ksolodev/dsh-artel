@@ -1078,7 +1078,7 @@ test('the rail lists project chats and switches to the chosen one', async () => 
   const target = debug.getStore('sess-2')
   assert.equal(target.getSnapshot().open, true, 'the panel is open in the chosen chat')
   assert.equal(target.getSnapshot().activeRunId, 'run-2')
-  assert.equal(debug.getStore('sess-1').getSnapshot().open, true, 'the panel of the current chat is not torn down')
+  assert.equal(debug.getStore('sess-1').getSnapshot().open, false, 'the surface moves to the chosen chat instead of leaving two panels open')
   target.dispose()
 })
 
@@ -1457,6 +1457,29 @@ test('closing the surface from its header returns to the chat', async () => {
   assert.ok(findByClass(opened, 'dsh-artel-launcher') !== undefined)
 
   state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('the surface survives the host switching the active chat', async () => {
+  const state = setup({ scenario: { project: DEFAULT_PROJECT, runs: [] } })
+  let tree = await renderLauncher(state)
+  findByClass(tree, 'dsh-artel-launcher').props.onClick()
+  await state.realm.settle()
+  tree = await state.realm.renderer.flush()
+  assert.ok(findByClass(tree, 'dsh-artel-surface') !== undefined)
+
+  // The host re-creates the composer slot for the agent chat a run just created.
+  tree = await renderLauncher(state, { sessionId: 'sess-2' })
+  assert.ok(findByClass(tree, 'dsh-artel-surface') !== undefined, 'the open panel stays on the new chat')
+  assert.equal(findByClass(tree, 'dsh-artel-launcher').props['aria-expanded'], true)
+
+  findByClass(tree, 'dsh-artel-surface__back').props.onClick()
+  await state.realm.renderer.flush()
+  tree = state.realm.renderer.tree()
+  assert.equal(findByClass(tree, 'dsh-artel-surface'), undefined, 'the header back button still closes it')
+  assert.equal(findByClass(tree, 'dsh-artel-launcher').props['aria-expanded'], false)
+
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-2').dispose()
 })
 
 test('change helpers title, total and group the card files', () => {

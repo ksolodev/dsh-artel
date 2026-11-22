@@ -23,6 +23,7 @@ async function waitFor(predicate, timeoutMs = 4000) {
 }
 
 const TRIAGE_TEXT = ['SPEC: Add a settings screen with a dark theme.', 'CRITERIA:', '- The settings screen opens.', '- The theme can be switched.', 'ROUTE: solo'].join('\n')
+const TRIAGE_ORCHESTRATOR = TRIAGE_TEXT.replace('ROUTE: solo', 'ROUTE: orchestrator')
 const REWORK_TEXT = 'VERDICT: rework\nBLOCKER: The header still shows the old theme.'
 
 /**
@@ -169,6 +170,12 @@ class FakeEngine {
    */
   async approvePlan(id) {
     this.calls.push({ method: 'approvePlan', runId: id })
+    if (this.stale.has(id)) {
+      const error = new Error('This run is no longer active')
+      error.code = 'artel/not-live'
+      error.status = 409
+      throw error
+    }
     const run = this.runs.get(id)
     if (run) {
       run.planApproved = true
@@ -888,6 +895,37 @@ test('returnWithComment starts a fresh version when the old run is no longer liv
     const restart = started[started.length - 1].request
     assert.equal(restart.basePath, runs.work.copyPath, 'the new version grows from the last copy')
     assert.match(restart.task, /Please fix the header spacing/)
+    const updated = await f.ticketOf(boardId, ticketId)
+    assert.ok(updated.versions.some((version) => version.runId === ticket.runId), 'the new run is recorded as a version')
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('approvePlan starts a new version when the plan run died with a restart (#31)', async () => {
+  const f = await fixture('plan-restart')
+  try {
+    const { boardId, ticketId } = await createTicket(f)
+    const triage = await startTriage(f, boardId, ticketId)
+    await settleRun(f, triage, TRIAGE_ORCHESTRATOR)
+    const work = await takeRun(f, (run) => run.autoqueue === true)
+    assert.equal(work.planApproval, true, 'the orchestrator work run carries the approval gate')
+    f.engine.setStatus(work.id, 'waiting', { planApproval: true, planApproved: false, plan: { parts: [{ id: 'p1', title: 'Part one' }] } })
+    const gated = await waitTicket(f, boardId, ticketId, (ticket) => ticket.waiting?.kind === 'plan')
+    assert.equal(gated.stage, 'waiting')
+
+    // A DSH restart leaves the stored plan run behind but not its live runtime.
+    f.engine.stale.add(work.id)
+    const starts = f.engine.findCall('start').length
+    const ticket = await f.runner.approvePlan(boardId, ticketId)
+
+    assert.equal(ticket.stage, 'working', 'the ticket is not parked on the dead run')
+    assert.equal(ticket.waiting, null)
+    assert.notEqual(ticket.runId, work.id, 'a new version is started')
+    const started = f.engine.findCall('start')
+    assert.equal(started.length, starts + 1, 'exactly one new work run is started')
+    assert.equal(started[started.length - 1].request.planApproval, true, 'the fresh orchestrator version asks for the plan again')
+    assert.ok(ticket.events.some((event) => event.key === 'factory.event.plan-restarted'), 'the card explains the restart')
     const updated = await f.ticketOf(boardId, ticketId)
     assert.ok(updated.versions.some((version) => version.runId === ticket.runId), 'the new run is recorded as a version')
   } finally {

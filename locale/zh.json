@@ -813,6 +813,7 @@
     "factory.event.answer-received": "已收到回答，工作继续。",
     "factory.event.answers-received": "已收到回答，工单重新进入拆解。",
     "factory.event.plan-approved": "计划已批准，各部分已启动。",
+    "factory.event.plan-restarted": "重启后旧计划无法批准——工厂将开始新版本。",
     "factory.event.repair-more": "再来一轮修复（第 {round} 轮）。",
     "factory.event.repair-accepted": "按现状接受：问题已写入卡片。",
     "factory.event.postponed": "已被你推迟。",

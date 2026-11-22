@@ -2140,6 +2140,46 @@ test('approvePlan: an ordinary run and an unknown run are refused', async () => 
   }
 })
 
+test('approvePlan refuses a plan whose runtime died with a restart (#31)', async () => {
+  const f = await fixture('orchestrator-plan-restart')
+  let restarted = null
+  try {
+    const run = await f.engine.start({
+      sessionId: 's1',
+      projectPath: f.projectPath,
+      mode: 'orchestrator',
+      task: 'Rework the demo app',
+      planApproval: true,
+    })
+    await runTurn(f.driver, f.driver.created[0], ORCH_PLAN)
+    assert.equal(latestRun(f).status, 'waiting', 'the planner stops at the approval gate')
+    assert.equal(f.driver.created.length, 1, 'only the planner exists before the approval')
+
+    // A fresh engine over the same run store models the host restart: the run is
+    // on disk, but there is no runtime, planner session or agent tree any more.
+    restarted = await new ArtelEngine({
+      store: new RunStore({ dir: path.join(f.stateDir, 'runs') }),
+      driver: new FakeDriver(),
+      copyRoot: f.copyRoot,
+      config: { swarmAgentCount: 3 },
+      log: { warn() {} },
+    }).init()
+    const notLive = (error) => error instanceof ArtelError && error.status === 409 && error.code === 'artel/not-live'
+    await assert.rejects(() => restarted.approvePlan(run.id), notLive, 'a dead run cannot be approved')
+
+    const stored = restarted.getRun(run.id)
+    assert.equal(stored.status, 'waiting', 'the run is not moved to running')
+    assert.equal(stored.planApproved, false, 'the plan is not marked approved')
+    assert.equal(stored.agents.length, 1, 'no part agents were created')
+    assert.deepEqual(stored.plan.parts.map((part) => part.status), ['pending', 'pending'], 'the parts stay pending')
+    assert.deepEqual(await fs.readdir(f.copyRoot).catch(() => []), [], 'no copies were made')
+  } finally {
+    if (restarted !== null) await restarted.dispose()
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
 const BUNDLE_PACKAGE = JSON.stringify({
   name: '@local/demo',
   version: '1.0.0',

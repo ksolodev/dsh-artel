@@ -816,6 +816,7 @@
     "factory.event.answer-received": "Ответ получен — работа продолжается.",
     "factory.event.answers-received": "Ответы получены — тикет снова на разборе.",
     "factory.event.plan-approved": "План согласован — части запущены.",
+    "factory.event.plan-restarted": "После перезапуска старый план не применить — фабрика собирает новую версию.",
     "factory.event.repair-more": "Ещё круг починки {round}.",
     "factory.event.repair-accepted": "Принято как есть: замечания записаны в карточку.",
     "factory.event.postponed": "Отложено вами.",

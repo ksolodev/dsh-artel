@@ -15,6 +15,18 @@ All notable changes to this project are documented here. The format follows
   applied tip, and a result that changes no file is refused with `409 artel/apply-unchanged` — the project,
   the applied ref and the branch stay as they were. A merge that ends without a single file change is
   refused the same way with `409 artel/merge-unchanged`.
+- **A failing check command that contains quotes still fails the gate (#24).** The queue check command used to be
+  handed to `cmd.exe` as hand-built arguments, and Node re-quoted them, so `node -e "process.exit(1)"` ran as a
+  different command and the apply read a passing check. The command is now passed to the shell as one string
+  (`shell: true`), the way `lib/check.js` already runs it, so the quotes reach the shell as written and
+  `409 artel/check-failed` fires as it should.
+- **A short issue reference deduplicates against its full form (#25).** `gh` resolved a bare `#22` in the project
+  folder but the ticket kept the repository unknown (`gh:-#22`), so importing `owner/repo#22` afterwards created a
+  second ticket. The repository is now recovered from the issue URL `gh` returns, so both references share one
+  `gh:<repo>#<n>` external id and the second import is `409 factory/duplicate-ticket`.
+- **The Factory panel speaks to assistive technology (#26).** The ticket card's answer, return-text and comment
+  fields take their existing placeholder text as `aria-label`, the stage pill is a polite `role="status"` region,
+  and both event logs are labelled `role="log"` polite regions, matching the new-ticket composer.
 - **The data root follows the profile the Host runs in.** The Host half reads the profile name from the
   launcher's `profileContext` instead of relying on `DSH_PROFILE` alone, so the desktop app and `dsh web`
   use `<DSH home>/artel/<profile>` as documented. A data root left in `<DSH home>/artel/default` by an

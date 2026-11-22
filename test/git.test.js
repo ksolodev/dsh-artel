@@ -179,7 +179,11 @@ test('refs read, compare-and-swap and delete', async () => {
   const refs = await git.refs('refs/heads/artel/')
   assert.deepEqual([...refs.keys()], ['refs/heads/artel/b1'])
 
-  await assert.rejects(git.updateRef('refs/heads/artel/b1', imported, '0'.repeat(40)), (error) => error.code === 'artel/git-ref-changed')
+  await assert.rejects(git.updateRef('refs/heads/artel/b1', imported, '0'.repeat(40)), (error) => (
+    error.code === 'artel/git-ref-changed' &&
+    // A ref that moved under us is a conflict for the client, not a 500 (#39).
+    error.status === 409
+  ))
   await git.deleteRef('refs/heads/artel/b1')
   assert.equal(await git.ref('refs/heads/artel/b1'), null)
 })

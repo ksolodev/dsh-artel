@@ -80,6 +80,32 @@ test('the generated client block matches the catalogs', () => {
   assert.equal(replaceRegion(source, render(catalogs)), source, 'run node tools/build-locales.mjs')
 })
 
+const LIB_DIR = path.join(ROOT, 'lib')
+const ARTEL_CODE = /'artel\/([a-z0-9-]+)'/g
+
+/**
+ * Every stable Artel error code the Host can put in a response, read from the
+ * quoted literals in lib/*.js (the Host never builds one dynamically).
+ * @returns {string[]} sorted codes.
+ */
+function artelErrorCodes() {
+  const codes = new Set()
+  for (const file of fs.readdirSync(LIB_DIR).filter((name) => name.endsWith('.js'))) {
+    const source = fs.readFileSync(path.join(LIB_DIR, file), 'utf8')
+    for (const match of source.matchAll(ARTEL_CODE)) codes.add(match[1])
+  }
+  return [...codes].sort()
+}
+
+test('every Artel error code has a localized message', () => {
+  const codes = artelErrorCodes()
+  assert.ok(codes.length > 60, `expected the Host error codes, got ${codes.length}`)
+  for (const tag of tags) {
+    const missing = codes.filter((code) => typeof catalogs[tag].strings[`error.artel.${code}`] !== 'string')
+    assert.deepEqual(missing, [], `${tag} is missing localized Artel error messages`)
+  }
+})
+
 test('the generated block inherits the line endings of the client file', () => {
   const source = fs.readFileSync(path.join(ROOT, 'lib', 'client.js'), 'utf8')
   const block = render(catalogs)

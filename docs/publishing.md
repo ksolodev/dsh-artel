@@ -33,6 +33,11 @@ copying when the old directory is still held open), so runs, copies and feeds su
 profile that still depends on `dsh-forge` must be re-pointed to `dsh-artel` before the restart; the tab
 id changed too, so an already open Forge tab will not restore.
 
+`<profile>` is the profile reported by the launcher's `profileContext`; a launcher may start a profile
+without exporting `DSH_PROFILE`. An older build could therefore leave its state in
+`<DSH_HOME>/artel/default`, and the next start moves that directory under the real profile name when the
+target does not exist yet — never merging or overwriting an existing one.
+
 ## Build a release tarball
 
 ```sh

@@ -4,6 +4,31 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The data root follows the profile the Host runs in.** The Host half reads the profile name from the
+  launcher's `profileContext` instead of relying on `DSH_PROFILE` alone, so the desktop app and `dsh web`
+  use `<DSH home>/artel/<profile>` as documented. A data root left in `<DSH home>/artel/default` by an
+  earlier launcher is moved under the real profile on the next start; an existing target is never merged
+  or overwritten.
+- **Every Artel failure speaks the chosen language.** All `artel/*` error codes the Host sends have
+  catalogue entries in English, Russian and Chinese, and the client words a known Artel code before the
+  generic "not found" or timeout banner; a test keeps the Host code list and the catalogues in sync.
+- **Queue branch routes check the session.** Every `/queue/branches` action resolves the project like the
+  other queue routes, so an unknown session id returns 404 `artel/unknown-session` instead of creating a
+  queue record for the profile fallback.
+- **Factory board creation asks first.** The empty Factory state confirms before creating a board, and
+  saving the board settings shows a short "Saved" status.
+- **Fusion presets use catalogue names.** The Fusion panel is seeded from the profile default's provider
+  catalogue, skips the default route and never repeats a model id, so the form no longer shows
+  raw-looking ids.
+- **Quiet startup for projectless branch queues.** A branch queue without a project path is no longer
+  reported as an error at startup; it has nothing to open yet and opens on demand.
+- **Narrow screens.** At 375 px the header language picker shows the whole Auto label and the hero is
+  compact enough for the queue row and its add button to stay in view.
+
 ## [0.14.0] — 2026-11-22
 
 The whole panel now speaks the language you choose. Every user-visible string —

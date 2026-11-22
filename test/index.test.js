@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
 
-import { defaultDataRoot, legacyDataRoot, migrateDataRoot, profileOf, resolveConfig } from '../lib/index.js'
+import { defaultDataRoot, legacyDataRoot, migrateDataRoot, profileNameOf, profileOf, resolveConfig } from '../lib/index.js'
 
 test('the data root follows DSH_HOME and DSH_PROFILE', () => {
   const root = defaultDataRoot({ DSH_HOME: 'D:\\dsh-home', DSH_PROFILE: 'desktop' }, 'C:\\Users\\me')
@@ -28,6 +28,80 @@ test('the profile name comes from the profile directory when DSH_PROFILE is miss
   assert.equal(profileOf({ DSH_PROFILE: 'custom', DSH_PROFILE_DIR: 'C:\\profiles\\other' }), 'custom')
   assert.equal(profileOf({ DSH_PROFILE_DIR: 'C:\\profiles\\' }), 'profiles')
   assert.equal(profileOf({}), 'default')
+})
+
+test('the running profile from the Host context wins over the environment', () => {
+  const ctx = { get: (name) => (name === 'profileContext' ? { name: 'desktop' } : undefined) }
+  assert.equal(profileNameOf(ctx, { DSH_PROFILE: 'from-env' }), 'desktop')
+  assert.equal(profileNameOf(ctx, {}), 'desktop')
+  // A profile name that could escape the data root falls back to the environment.
+  assert.equal(profileNameOf({ get: () => ({ name: '../escape' }) }, { DSH_PROFILE: 'custom' }), 'custom')
+  assert.equal(profileNameOf({ get: () => ({ name: '..' }) }, {}), 'default')
+  assert.equal(profileNameOf(null, { DSH_PROFILE_DIR: 'C:\\Users\\me\\.dsh\\profiles\\desktop' }), 'desktop')
+})
+
+test('the configuration follows the running profile, not just the environment', () => {
+  const settings = resolveConfig({}, { DSH_HOME: 'D:\\dsh-home' }, 'desktop')
+  assert.equal(settings.copyRoot, path.join('D:\\dsh-home', 'artel', 'desktop', 'copies'))
+  assert.equal(settings.stateDir, path.join('D:\\dsh-home', 'artel', 'desktop', 'state'))
+  assert.equal(defaultDataRoot({ DSH_HOME: 'D:\\dsh-home' }, 'C:\\Users\\me', 'desktop'), path.join('D:\\dsh-home', 'artel', 'desktop'))
+})
+
+test('the unscoped data root of an earlier launcher is moved under the running profile', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'dsh-artel-profile-migrate-'))
+  try {
+    const generic = path.join(home, '.dsh', 'artel', 'default')
+    mkdirSync(path.join(generic, 'state'), { recursive: true })
+    writeFileSync(path.join(generic, 'state', 'settings.json'), '{"language":null}')
+
+    const result = migrateDataRoot({}, home, 'desktop')
+
+    assert.equal(result.moved, true)
+    assert.equal(result.how, 'renamed')
+    assert.equal(result.from, generic)
+    assert.equal(result.to, path.join(home, '.dsh', 'artel', 'desktop'))
+    assert.equal(readFileSync(path.join(result.to, 'state', 'settings.json'), 'utf8'), '{"language":null}')
+    assert.equal(existsSync(generic), false)
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('the unscoped data root is never moved into an existing profile root', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'dsh-artel-profile-keep-'))
+  try {
+    const generic = path.join(home, '.dsh', 'artel', 'default')
+    const target = path.join(home, '.dsh', 'artel', 'desktop')
+    mkdirSync(generic, { recursive: true })
+    mkdirSync(target, { recursive: true })
+    writeFileSync(path.join(generic, 'old.txt'), 'old')
+    writeFileSync(path.join(target, 'new.txt'), 'new')
+
+    const result = migrateDataRoot({}, home, 'desktop')
+
+    assert.equal(result.moved, false)
+    assert.equal(readFileSync(path.join(target, 'new.txt'), 'utf8'), 'new')
+    assert.equal(existsSync(path.join(target, 'old.txt')), false)
+    assert.equal(readFileSync(path.join(generic, 'old.txt'), 'utf8'), 'old')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
+})
+
+test('a default-profile start never moves its own data root', () => {
+  const home = mkdtempSync(path.join(tmpdir(), 'dsh-artel-profile-default-'))
+  try {
+    const generic = path.join(home, '.dsh', 'artel', 'default')
+    mkdirSync(generic, { recursive: true })
+    writeFileSync(path.join(generic, 'state.json'), '{}')
+
+    const result = migrateDataRoot({}, home, 'default')
+
+    assert.equal(result.moved, false)
+    assert.equal(readFileSync(path.join(generic, 'state.json'), 'utf8'), '{}')
+  } finally {
+    rmSync(home, { recursive: true, force: true })
+  }
 })
 
 test('the configuration has working defaults', () => {

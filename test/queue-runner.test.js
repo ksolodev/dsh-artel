@@ -870,3 +870,28 @@ test('three consecutive parks stop the queue with parks', async () => {
     await f.cleanup()
   }
 })
+
+test('the startup warm-up skips a branch queue without a project path', async () => {
+  const f = await fixture('init-skip')
+  const warnings = []
+  const runner = new QueueRunner({
+    engine: f.engine,
+    store: f.store,
+    stateDir: f.stateDir,
+    copyRoot: f.copyRoot,
+    log: { warn: (message) => warnings.push(String(message ?? '')) },
+    tuning: { pollMs: 10, checkTimeoutMs: 5000 },
+  })
+  try {
+    await f.store.ensure('idle-queue')
+    await runner.init()
+    assert.deepEqual(warnings.filter((line) => line.includes('cannot open the queue repository')), [])
+
+    await f.store.ensure('lost-project', { projectPath: path.join(f.root, 'missing-project') })
+    await runner.init()
+    assert.equal(warnings.filter((line) => line.includes('cannot open the queue repository for lost-project')).length, 1)
+  } finally {
+    runner.dispose()
+    await f.cleanup()
+  }
+})

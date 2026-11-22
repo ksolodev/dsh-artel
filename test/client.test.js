@@ -1604,7 +1604,7 @@ test('store surfaces apply conflicts in the changes error', async () => {
   const snap = store.getSnapshot()
   assert.equal(snap.applying, false)
   assert.equal(snap.decided, null)
-  assert.match(snap.changesError, /Nothing was applied\. src\/math\.js: changed on disk/)
+  assert.match(snap.changesError, /The branch conflicts with the project\./)
   assert.equal(state.realm.calls.filter((call) => call.pathname.endsWith('/apply')).length, 1)
 
   store.dismissChangesError()
@@ -2159,14 +2159,14 @@ test('hero shows the five Fusion routes and starts a fusion run', async () => {
 
   // The panel is pre-seeded with distinct catalog rows, judge and implementer with the default.
   const values = () => fusionChips().map((chip) => pickerTriggers(chip)[0].props['data-value'])
-  assert.deepEqual(values(), ['test/fast', 'test/slow', 'test/fast', 'test/fast', 'test/fast'])
+  assert.deepEqual(values(), ['test/slow', 'test/slow', 'test/fast', 'test/fast', 'test/fast'])
 
   // Picking another model for the first panel slot leaves the other four slots intact.
   pickerTriggers(fusionChips()[0])[0].props.onClick()
   await state.realm.renderer.flush()
-  pickOption(state.realm.renderer.tree(), 'test/slow')
+  pickOption(state.realm.renderer.tree(), 'test/fast')
   await state.realm.renderer.flush()
-  assert.deepEqual(values(), ['test/slow', 'test/slow', 'test/fast', 'test/fast', 'test/fast'])
+  assert.deepEqual(values(), ['test/fast', 'test/slow', 'test/fast', 'test/fast', 'test/fast'])
 
   const textarea = findAll(heroNow(), (node) => node.type === 'textarea' && node.props.className === 'dsh-artel-hero__textarea')[0]
   textarea.props.onChange({ target: { value: 'Выберите лучший подход к задаче' } })
@@ -2182,7 +2182,7 @@ test('hero shows the five Fusion routes and starts a fusion run', async () => {
   assert.equal(post.body.task, 'Выберите лучший подход к задаче')
   assert.deepEqual(post.body.models, {
     panel: [
-      { provider: 'test', model: 'slow' },
+      { provider: 'test', model: 'fast', reasoningEffort: 'low' },
       { provider: 'test', model: 'slow' },
       { provider: 'test', model: 'fast', reasoningEffort: 'low' },
     ],
@@ -2190,6 +2190,66 @@ test('hero shows the five Fusion routes and starts a fusion run', async () => {
     implementer: { provider: 'test', model: 'fast', reasoningEffort: 'low' },
   })
   assert.ok(findByClass(state.realm.renderer.tree(), 'dsh-artel-run') !== undefined, 'the run pane replaces the hero')
+
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('the Fusion form seeds the panel from the default provider catalogue', async () => {
+  const models = {
+    providers: [
+      {
+        id: 'deepseek-account',
+        name: 'DeepSeek Account',
+        models: [
+          { id: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash', efforts: [] },
+          { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro', efforts: [] },
+        ],
+      },
+      {
+        id: 'opencode-go',
+        name: 'opencode-go',
+        models: [
+          { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro (New)', efforts: [] },
+          { id: 'deepseek-v4.1-flash', name: 'DeepSeek V4.1 Flash', efforts: [{ id: 'low', label: 'Low' }, { id: 'max', label: 'Max' }], defaultEffort: 'max' },
+          { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', efforts: [] },
+        ],
+      },
+    ],
+    default: { provider: 'opencode-go', model: 'deepseek-v4.1-flash', reasoningEffort: 'max' },
+  }
+  const state = setup({ scenario: { project: DEFAULT_PROJECT, runs: [], models } })
+  const tree = await renderLauncher(state)
+  findByClass(tree, 'dsh-artel-launcher').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  await state.realm.renderer.flush()
+
+  const heroNow = () => findByClass(state.realm.renderer.tree(), 'dsh-artel-hero')
+  const radios = () => findAll(findByClass(heroNow(), 'dsh-artel-segmented'), (node) => node.type === 'button' && node.props.role === 'radio')
+  const chips = () => findAll(findByClass(heroNow(), 'dsh-artel-hero__fusion'), (node) => typeof node.props.className === 'string' && node.props.className.split(/\s+/).includes('dsh-artel-hero__fusion-pick'))
+  const values = () => chips().map((chip) => pickerTriggers(chip)[0].props['data-value'])
+  const labels = () => chips().map((chip) => textOf(findByClass(chip, 'dsh-artel-select__value')).trim())
+
+  radios()[3].props.onClick()
+  await state.realm.renderer.flush()
+
+  assert.deepEqual(values(), [
+    'opencode-go/deepseek-v4-pro',
+    'opencode-go/claude-haiku-5-5',
+    'deepseek-account/deepseek-flash',
+    'opencode-go/deepseek-v4.1-flash',
+    'opencode-go/deepseek-v4.1-flash',
+  ], 'the panel prefers the default provider, skips the default route and dedupes model ids')
+  assert.deepEqual(labels(), [
+    'DeepSeek V4 Pro (New)',
+    'Claude Haiku 5.5',
+    'DeepSeek-V4.1-Flash',
+    'DeepSeek V4.1 Flash',
+    'DeepSeek V4.1 Flash',
+  ], 'the chips show the names the providers declare')
+  const panelModels = values().slice(0, 3).map((value) => value.slice(value.indexOf('/') + 1))
+  assert.equal(new Set(panelModels).size, 3, 'one model id appears in the panel only once')
+  assert.equal(panelModels.includes('deepseek-v4.1-flash'), false, 'the judge keeps the default route')
 
   state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
 })
@@ -2670,7 +2730,7 @@ test('all three dictionaries carry the auto-queue and factory strings', () => {
     assert.deepEqual(Object.keys(dictionaries[locale]).filter((key) => !PLURAL.test(key)).sort(), english, locale + ' has every English key')
   }
   const queueAndFactory = english.filter((key) => key.startsWith('queue.') || key.startsWith('factory.'))
-  assert.equal(queueAndFactory.length, 419, 'every queue and factory string is present')
+  assert.equal(queueAndFactory.length, 422, 'every queue and factory string is present')
   const expected = {
     en: {
       'queue.title': 'Waiting',
@@ -2783,6 +2843,35 @@ test('describeError prefers a translated error code over the host message', asyn
     debug.describeError({ code: 'artel/bad-language', message: 'Unsupported language', params: { language: 'de' } }),
     'Язык de недоступен.',
   )
+})
+
+test('describeError words an Artel code before the generic status fallbacks', async () => {
+  const state = setup({ locale: 'ru' })
+  const debug = state.realm.window.__DSH_ARTEL_DEBUG__
+  state.realm.document.documentElement = { lang: 'ru' }
+  await debug.language.init()
+  // A 404 from an Artel route used to collapse into the generic "not found".
+  assert.equal(
+    debug.describeError({ code: 'artel/unknown-session', message: 'unknown session', status: 404 }),
+    'Этот чат больше не существует.',
+  )
+  assert.equal(
+    debug.describeError({ code: 'artel/queue-missing', message: 'No auto-queue for session s1.', status: 404 }),
+    'Этой автоочереди больше нет.',
+  )
+  // A code without params still wins over the Host's English text.
+  assert.equal(
+    debug.describeError({ code: 'artel/branch-busy', message: 'The branch still has queued or running tasks.', status: 409 }),
+    'В ветке ещё есть задачи в очереди или в работе.',
+  )
+  // With the component's `t` the same catalogue is used.
+  const t = state.ctx.locale.bind('dsh-artel')
+  assert.equal(
+    debug.describeError({ code: 'artel/project-drift', message: 'The project has uncommitted changes.', status: 409 }, t),
+    'В проекте есть незакоммиченные изменения — подтвердите расхождение, чтобы продолжить.',
+  )
+  // An unknown code keeps the previous fallback chain intact.
+  assert.equal(debug.describeError({ code: 'artel/made-up', message: 'Host raw', status: 404 }), 'This Artel run no longer exists')
 })
 
 test('an unknown language falls back to the base language and then to English', async () => {
@@ -3080,7 +3169,7 @@ test('branch actions load branch state and keep error details for the panel', as
   assert.equal(applied, null)
   assert.equal(store.getSnapshot().queueBranchError.code, 'artel/project-drift')
   assert.deepEqual(store.getSnapshot().queueBranchError.details.drift.files, ['src/app.js'])
-  assert.match(store.getSnapshot().queueBranchError.text, /uncommitted changes/)
+  assert.match(store.getSnapshot().queueBranchError.text, /незакоммиченные изменения/)
   store.dispose()
 })
 
@@ -3993,6 +4082,63 @@ test('the factory board renders the columns and opens a ticket', async () => {
   assert.equal(saved.template, 'normal')
   assert.equal(saved.enabled, true)
   assert.deepEqual(saved.routes, ['solo', 'swarm', 'fusion', 'orchestrator'])
+  opened = await state.realm.renderer.flush()
+  const savedMark = findByClass(opened, 'dsh-artel-factory__saved')
+  assert.ok(savedMark !== undefined, 'a successful save says so next to the button')
+  assert.equal(textOf(savedMark).trim(), 'Сохранено')
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('creating the first factory board asks for confirmation first', async () => {
+  const createCalls = []
+  const boards = []
+  const state = setup({
+    scenario: {
+      project: DEFAULT_PROJECT,
+      runs: [],
+      route: ({ method, pathname, body }) => {
+        if (pathname === '/api/dsh-artel/factory' && method === 'GET') return reply({ boards })
+        if (pathname === '/api/dsh-artel/factory' && method === 'POST') {
+          createCalls.push(body)
+          const board = { ...FACTORY_BOARD, id: 'board-new', name: 'Новая доска' }
+          boards.push(board)
+          return reply({ board })
+        }
+        if (pathname === '/api/dsh-artel/factory/board-new' && method === 'GET') return reply({ boards, board: boards[0], tickets: [] })
+        if (pathname === '/api/dsh-artel/queue' && method === 'GET') return reply(queueFixture())
+        return undefined
+      },
+    },
+  })
+  let opened = await openArtel(state)
+  const factoryButton = findAll(opened, (node) => node.type === 'button' && String(node.props.className ?? '').includes('dsh-artel-rail__factory'))[0]
+  factoryButton.props.onClick()
+  for (let iteration = 0; iteration < 3; iteration += 1) {
+    await state.realm.settle()
+    opened = await state.realm.renderer.flush()
+  }
+
+  const empty = () => findByClass(opened, 'dsh-artel-factory__emptyState')
+  assert.ok(empty() !== undefined, 'an empty factory offers to create a board')
+  findButton(empty(), 'Создать доску').props.onClick()
+  opened = await state.realm.renderer.flush()
+  assert.deepEqual(createCalls, [], 'the first click only asks, it does not create')
+  assert.match(textOf(empty()), /Создать её для этого проекта/)
+
+  findButton(empty(), 'Отмена').props.onClick()
+  opened = await state.realm.renderer.flush()
+  assert.deepEqual(createCalls, [], 'cancelling creates nothing')
+  assert.ok(findButton(empty(), 'Создать доску') !== undefined, 'the plain create button comes back')
+
+  findButton(empty(), 'Создать доску').props.onClick()
+  opened = await state.realm.renderer.flush()
+  findButton(empty(), 'Да, создать').props.onClick()
+  for (let iteration = 0; iteration < 3; iteration += 1) {
+    await state.realm.settle()
+    opened = await state.realm.renderer.flush()
+  }
+  assert.equal(createCalls.length, 1, 'confirming reaches the Host once')
+  assert.equal(findByClass(opened, 'dsh-artel-factory__emptyState'), undefined, 'the created board replaces the empty state')
   state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
 })
 

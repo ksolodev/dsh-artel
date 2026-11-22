@@ -564,6 +564,12 @@ other language.
 - Interface language of the profile: `<DSH home>/artel/<profile>/state/settings.json` — `null` follows
   the DSH language; the globe button in the panel header writes it.
 
+`<profile>` is the DSH profile the Host runs Artel in: the Host half reads it from the launcher's
+`profileContext`, so the desktop app and `dsh web` keep the same per-profile directory even when the
+launcher does not export `DSH_PROFILE`. An earlier build could have written to
+`<DSH home>/artel/default`; the next start moves that directory to the real profile name when the
+target does not exist yet — an existing directory is never merged or overwritten.
+
 Artel keeps at most `maxRunsPerSession` runs per session: the oldest finished runs (applied,
 discarded, stopped, failed) are dropped from the list together with their copies. Runs still waiting
 for your decision are never dropped.

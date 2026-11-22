@@ -4001,6 +4001,23 @@ test('the layout keeps the run column scrollable and the queue strip non-shrinki
   state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
 })
 
+test('the panel palette does not follow a light host theme (#38)', async () => {
+  const state = setup({ scenario: { project: DEFAULT_PROJECT, runs: [AUTOQUEUE_RUN], changes: [] } })
+  await openArtel(state)
+  const css = state.realm.styleElements[0].textContent
+  const block = css.match(/\.dsh-artel-surface\s*\{([\s\S]*?)\}/)
+  assert.ok(block, 'the surface rule exists')
+  // The surface stays dark in every host theme, so its colours are fixed: host
+  // theme tokens flip to dark-on-light values and made «Saved» and the borders
+  // invisible against that dark surface (#38).
+  assert.match(block[1], /color-scheme:\s*dark/, 'the panel asks for a dark native colour scheme')
+  assert.doesNotMatch(block[1], /--dsw-alias-(brand-primary|border-l1|border-l2|fg-primary|fg-secondary|fg-tertiary)/, 'panel colours do not come from host theme tokens')
+  assert.match(block[1], /--a-accent:\s*#f9fafb/, 'the accent stays a light colour on the dark surface')
+  assert.match(block[1], /--a-fg:\s*#eeedf5/, 'the foreground stays light')
+  assert.match(block[1], /--a-line:\s*rgba\(255,\s*255,\s*255,\s*0\.07\)/, 'borders stay light')
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
 test('unsaved versions open the queue pre-flight and get saved as versions', async () => {
   const blocked = {
     pendingVersions: [{ runId: 'run-review', title: 'Add a button', status: 'interrupted', changeCount: 2 }],

@@ -4,7 +4,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { QueueRunner } from '../lib/queue-runner.js'
-import { QueueStore } from '../lib/queue.js'
+import { MAX_QUEUE_TASKS, QueueStore } from '../lib/queue.js'
 import { autoAnswerPrompt } from '../lib/prompts.js'
 
 /**
@@ -255,7 +255,7 @@ async function fixture(name, options = {}) {
   const engine = new FakeEngine({ copyRoot })
   const store = new QueueStore({ dir: path.join(stateDir, 'queue') })
   await store.init()
-  const runner = new QueueRunner({ engine, store, stateDir, copyRoot, now: () => clock.value, tuning: { pollMs: 10, checkTimeoutMs: 5000 } })
+  const runner = new QueueRunner({ engine, store, stateDir, copyRoot, log: options.log ?? {}, now: () => clock.value, tuning: { pollMs: 10, checkTimeoutMs: 5000 } })
   return {
     root,
     projectPath,
@@ -336,6 +336,25 @@ test('queue summary reports counts and progress, addTasks fills the queue', asyn
   }
 })
 
+test('init keeps a queue whose run copy is gone idle instead of warning', async () => {
+  const warnings = []
+  const infos = []
+  const f = await fixture('stale-copy', {
+    log: { warn: (line) => warnings.push(line), info: (line) => infos.push(line) },
+  })
+  try {
+    const copyPath = path.join(f.copyRoot, 'run-1')
+    await fs.mkdir(copyPath, { recursive: true })
+    await f.runner.addTasks({ sessionId: 's1', projectPath: copyPath, texts: ['Ship it'] })
+    await fs.rm(copyPath, { recursive: true, force: true })
+    await f.runner.init()
+    assert.deepEqual(warnings, [], 'a swept-away copy is not a startup failure')
+    assert.ok(infos.some((line) => line.includes('stays idle')), 'the skip is explained once')
+  } finally {
+    await f.cleanup()
+  }
+})
+
 test('preflight reports pending versions, the guessed check command and the limit', async () => {
   const f = await fixture('preflight')
   try {
@@ -388,6 +407,35 @@ test('setAutopilot starts the pump with autoqueue and no base version', async ()
     assert.match(summary.progress.text, /^Автоочередь идёт · 0 из 1$/)
     assert.equal(summary.progress.key, 'queue.progress.auto')
     assert.deepEqual(summary.progress.params, { done: 0, total: 1 })
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('a second autopilot run starts from zero after the first hit its limit', async () => {
+  const f = await fixture('autopilot-restart')
+  try {
+    await f.runner.addTasks({ sessionId: 's1', projectPath: f.projectPath, texts: ['Second run task'] })
+    const stale = f.store.get('s1')
+    stale.stats = { taken: 1, passed: 1, parked: 0, consecutiveParks: 0, startedAt: 1 }
+    stale.limit = 1
+    stale.stopReason = 'limit'
+    await f.store.replace('s1', stale)
+
+    const before = await f.summary()
+    assert.equal(before.autopilot, false)
+    assert.equal(before.running, false)
+    assert.equal(before.counts.queued, 1)
+
+    await f.runner.setAutopilot({
+      sessionId: 's1',
+      projectPath: f.projectPath,
+      autopilot: true,
+      limit: 1,
+      checkCommand: 'node -e "process.exit(0)"',
+    })
+    const start = await waitFor(() => f.engine.lastCall('start'))
+    assert.equal(start.request.task, 'Second run task')
   } finally {
     await f.cleanup()
   }
@@ -535,8 +583,38 @@ test('a failing check asks for repairs and parks the task after two fixes', asyn
     assert.equal(task.reasonKey, 'queue.reason.check-failed')
     assert.deepEqual(task.reasonParams, { count: 2 })
     assert.equal(task.fixes, 2)
-    assert.equal(f.engine.findCall('interrupt').length, 1)
+    // Parking is stored before the engine round trip, so the call itself lands
+    // one tick after the status; wait for it instead of racing it.
+    const interrupt = await waitFor(() => f.engine.findCall('interrupt')[0])
+    assert.equal(interrupt.runId, run.id)
     assert.equal(f.engine.findCall('message').length, 2)
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('a run that finishes without changes parks without interrupting it', async () => {
+  const f = await fixture('no-changes')
+  try {
+    await f.runner.addTasks({ sessionId: 's1', projectPath: f.projectPath, texts: ['Look around the project'] })
+    await f.runner.setAutopilot({
+      sessionId: 's1',
+      projectPath: f.projectPath,
+      autopilot: true,
+      checkCommand: 'node -e "process.exit(0)"',
+    })
+    const run = await waitFor(() => f.engine.started[0])
+
+    f.engine.setChanges(run.id, [])
+    f.engine.setStatus(run.id, 'finished', { changeCount: 0 })
+    const task = await waitFor(async () => {
+      const summary = await f.summary()
+      return summary.tasks[0].status === 'parked' ? summary.tasks[0] : null
+    })
+    assert.equal(task.reasonKey, 'queue.reason.no-changes')
+    // Interrupting an already idle run appends a misleading «You stopped the
+    // run» event, so the park must not touch the engine.
+    assert.equal(f.engine.findCall('interrupt').length, 0)
   } finally {
     await f.cleanup()
   }
@@ -565,7 +643,8 @@ test('a first question gets the auto-answer, a second one parks the task', async
     })
     assert.match(task.reason, /второй вопрос/)
     assert.equal(task.reasonKey, 'queue.reason.second-question')
-    assert.equal(f.engine.findCall('interrupt')[0].runId, run.id)
+    const interrupt = await waitFor(() => f.engine.findCall('interrupt')[0])
+    assert.equal(interrupt.runId, run.id)
   } finally {
     await f.cleanup()
   }
@@ -587,7 +666,8 @@ test('outward text in the feed parks the task instead of shipping', async () => 
     assert.match(task.reason, /git push/)
     assert.equal(task.reasonKey, 'queue.reason.outward')
     assert.match(task.reasonParams.detail, /git push/)
-    assert.equal(f.engine.findCall('interrupt').length, 1)
+    const interrupt = await waitFor(() => f.engine.findCall('interrupt')[0])
+    assert.equal(interrupt.runId, run.id)
   } finally {
     await f.cleanup()
   }
@@ -657,7 +737,17 @@ test('stop parks the running task and finishes with stopped', async () => {
     await f.runner.setAutopilot({ sessionId: 's1', projectPath: f.projectPath, autopilot: true, checkCommand: 'node -e "process.exit(0)"' })
     const run = await waitFor(() => f.engine.started[0])
 
+    // The engine round trip must already see the task as parked: the queue used
+    // to keep `running` in its store until interrupt() resolved, which is the
+    // window the flaky test tripped over.
+    const statusDuringInterrupt = []
+    const interrupt = f.engine.interrupt.bind(f.engine)
+    f.engine.interrupt = async (id) => {
+      statusDuringInterrupt.push(f.store.get('s1')?.tasks[0]?.status ?? null)
+      return interrupt(id)
+    }
     const summary = await f.runner.stop('s1')
+    assert.deepEqual(statusDuringInterrupt, ['parked'])
     assert.equal(summary.stopReason, 'stopped')
     assert.equal(summary.autopilot, false)
     assert.equal(summary.tasks[0].status, 'parked')
@@ -751,6 +841,38 @@ test('finishAfterCurrent lets the running task settle before finishing', async (
   }
 })
 
+test('the queue rejects edits that cannot change anything', async () => {
+  const f = await fixture('contracts')
+  try {
+    await f.runner.addTasks({ sessionId: 's1', projectPath: f.projectPath, texts: ['Waiting'] })
+    const task = f.store.get('s1').tasks[0]
+    await assert.rejects(
+      () => f.runner.retryTask('s1', task.id),
+      (error) => error.status === 409 && error.code === 'queue/task-not-retryable',
+    )
+    await assert.rejects(
+      () => f.runner.postponeVersion('s1', 'missing-run'),
+      (error) => error.status === 404 && error.code === 'queue/unknown-run',
+    )
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('bulk add refuses to grow the queue past the task limit', async () => {
+  const f = await fixture('bulk-limit')
+  try {
+    const texts = Array.from({ length: MAX_QUEUE_TASKS + 1 }, (_, index) => `Task ${index}`)
+    await assert.rejects(
+      () => f.runner.addTasks({ sessionId: 's1', projectPath: f.projectPath, texts }),
+      (error) => error.status === 409 && error.code === 'queue/full',
+    )
+    assert.equal(f.store.get('s1').tasks.length, 0, 'a refused bulk add must not create tasks')
+  } finally {
+    await f.cleanup()
+  }
+})
+
 test('retryTask, moveTask, removeTask and clearFinished edit the queue', async () => {
   const f = await fixture('edits')
   try {
@@ -838,6 +960,31 @@ test('three consecutive parks stop the queue with parks', async () => {
     assert.equal(summary.results.stopKey, 'queue.stop.parks')
     assert.equal(summary.results.stopText, 'Три задачи подряд ушли в «Отложенное».')
   } finally {
+    await f.cleanup()
+  }
+})
+
+test('the startup warm-up skips a branch queue without a project path', async () => {
+  const f = await fixture('init-skip')
+  const warnings = []
+  const runner = new QueueRunner({
+    engine: f.engine,
+    store: f.store,
+    stateDir: f.stateDir,
+    copyRoot: f.copyRoot,
+    log: { warn: (message) => warnings.push(String(message ?? '')) },
+    tuning: { pollMs: 10, checkTimeoutMs: 5000 },
+  })
+  try {
+    await f.store.ensure('idle-queue')
+    await runner.init()
+    assert.deepEqual(warnings.filter((line) => line.includes('cannot open the queue repository')), [])
+
+    await f.store.ensure('lost-project', { projectPath: path.join(f.root, 'missing-project') })
+    await runner.init()
+    assert.equal(warnings.filter((line) => line.includes('cannot open the queue repository for lost-project')).length, 1)
+  } finally {
+    runner.dispose()
     await f.cleanup()
   }
 })

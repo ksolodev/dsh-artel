@@ -213,6 +213,7 @@ function fakeHost(options = {}) {
       if (name === 'agentDefaultModel') return options.noDefaultModel === true ? undefined : defaultModel
       if (name === 'subagents') return options.peers === false ? undefined : subagents
       if (name === 'sessions') return options.noSessions === true ? undefined : { get: (sessionId) => sessions.get(sessionId) }
+      if (name === 'sessionQuery') return options.sessionQuery
       if (name === 'approval') return approval
       if (name === 'sandboxPolicy') return sandboxPolicy
       if (name === 'tokenMeter') return options.tokenMeter
@@ -870,6 +871,39 @@ test('no workspace for this version means no task chat and no bridge', async () 
   assert.equal(await bareDriver.createTaskChat({ projectPath: 'C:\\project', task: 'x' }), null)
   assert.equal(await bareDriver.attachProjectChat({ sessionId: 'session-1', projectPath: 'C:\\project' }), null)
   await bareDriver.dispose()
+})
+
+test('hasSession finds a cold chat in sessionQuery and projectPathOf reads its cwd', async () => {
+  let disposed = 0
+  const host = fakeHost({
+    sessionQuery: {
+      async observeSession(id) {
+        return {
+          header: { id, cwd: 'C:\\cold-project' },
+          [Symbol.dispose]() {
+            disposed += 1
+          },
+        }
+      },
+    },
+  })
+  const driver = new HostDriver(host.ctx, { log: { warn() {} } })
+  assert.equal(await driver.hasSession('session-cold'), true)
+  assert.equal(await driver.projectPathOf('session-cold'), 'C:\\cold-project')
+  assert.equal(disposed, 2, 'every prepared observation is disposed')
+})
+
+test('an unknown session is rejected instead of falling back to the profile directory', async () => {
+  const host = fakeHost({
+    sessionQuery: {
+      async observeSession() {
+        throw Object.assign(new Error('not found'), { code: 'SESSION_QUERY_SESSION_NOT_FOUND' })
+      },
+    },
+  })
+  const driver = new HostDriver(host.ctx, { log: { warn() {} } })
+  assert.equal(await driver.hasSession('session-missing'), false)
+  await assert.rejects(() => driver.projectPathOf('session-missing'), /Unknown chat session/)
 })
 
 test('restoreProjectChats re-primes the chats of opted-in runs only', async () => {

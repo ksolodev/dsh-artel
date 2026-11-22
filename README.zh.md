@@ -151,6 +151,8 @@ Conductor、Fusion、Orchestrator）、状态、文件路径以及智能体写�
 
 插件已更名为 Artel（npm 名称 `dsh-forge` 属于一个无关的占位包）。首次启动时，Host 会把之前的数据根从 `<DSH home>/forge/<profile>` 移到 `<DSH home>/artel/<profile>`，因此现有的运行记录、动态和副本仍然可用。插件 id 随名称改变：打开的 Forge 页面不会恢复 Artel，因此请重启 DeepSeek Harness，并从聊天输入框打开一次 Artel。
 
+`<profile>` 是 Host 启动 Artel 时使用的配置，从启动器的 `profileContext` 读取，而不只依赖 `DSH_PROFILE`，因此桌面应用和 `dsh web` 使用同一个按配置隔离的目录。在没有该信息时启动的版本可能写入 `<DSH home>/artel/default`；此版本首次启动时，如果目标目录尚不存在，该目录会移动到 `<DSH home>/artel/<profile>`——已有的配置目录永远不会被合并或覆盖。
+
 ## 环境要求
 
 - DSH `^0.2.2-rc.1`，其 Host 提供会话控制器（桌面应用或 `dsh web`）。

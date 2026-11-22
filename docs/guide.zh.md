@@ -455,6 +455,11 @@ Orchestrator）、状态、文件路径以及智能体写出的内容保持不�
   `<DSH home>/storages/workspace.json`（Host 工作区）中，Artel 会在每次启动时重新归档。
 - 配置的界面语言：`<DSH home>/artel/<profile>/state/settings.json` —— `null` 跟随 DSH 语言；面板标题栏中的地球按钮会写入它。
 
+`<profile>` 是 Host 运行 Artel 的 DSH 配置：服务端会从启动器的 `profileContext` 读取它，因此即使
+启动器没有导出 `DSH_PROFILE`，桌面应用和 `dsh web` 也会使用同一个按配置隔离的目录。较早的版本可能写入
+`<DSH home>/artel/default`；下次启动时，如果目标目录尚不存在，该目录会移动到真实的配置名之下——
+已有目录永远不会被合并或覆盖。
+
 Artel 每个会话最多保留 `maxRunsPerSession` 次运行：最旧的已结束运行（已应用、已丢弃、已停止、
 失败）会连同副本一起从列表中移除。仍在等待你决定的运行不会被移除。
 

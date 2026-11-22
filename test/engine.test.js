@@ -303,6 +303,34 @@ test('the run phase tracks the latest status line, even on terminal runs', async
   }
 })
 
+test('the run keeps the tokens it spent after its live agents are released', async () => {
+  const f = await fixture('spend-kept')
+  try {
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Change the answer' })
+    const handle = f.driver.created[0]
+    f.driver.stats.set(handle.sessionId, {
+      context: null,
+      usage: { inputTokens: 900, outputTokens: 100, cacheReadTokens: 100, cacheWriteTokens: 100, totalTokens: 1_200, requests: 1 },
+    })
+
+    await f.engine.discard(run.id)
+    const summary = f.engine.getRun(run.id)
+    assert.equal(summary.status, 'discarded')
+    assert.deepEqual(summary.spend, {
+      inputTokens: 900,
+      outputTokens: 100,
+      cacheReadTokens: 100,
+      cacheWriteTokens: 100,
+      totalTokens: 1_200,
+      requests: 1,
+    }, 'the token tag survives the Released agents')
+    assert.equal(f.engine.listRuns('s1')[0].spend.totalTokens, 1_200, 'the saved record carries the counters across a restart')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
 test('the run summary says what each agent is doing and what the run waits for', async () => {
   const f = await fixture('live-view')
   try {
@@ -555,8 +583,14 @@ test('message wakes idle agents, interrupt stops them, discard removes the copy'
     assert.equal(interrupted.status, 'interrupted')
     assert.deepEqual(f.driver.interrupted, [handle.name])
 
-    await f.engine.discard(run.id)
-    assert.equal(f.engine.listRuns('s1')[0].status, 'discarded')
+    const discarded = await f.engine.discard(run.id)
+    assert.equal(discarded.status, 'discarded')
+    assert.equal(discarded.changeCount, 0, 'the header no longer claims changes after the copy is gone')
+    const finalFeed = await f.engine.readFeed(run.id, { cursor: 0 })
+    assert.ok(
+      finalFeed.events.some((event) => event.kind === 'status' && event.key === 'feed.finish.discarded'),
+      'the feed records the discard instead of leaving the stop message in place',
+    )
     await assert.rejects(() => fs.stat(run.copyPath), /ENOENT/)
   } finally {
     await f.engine.dispose()
@@ -1423,6 +1457,36 @@ test('a fusion run fails when every panelist stops', async () => {
   }
 })
 
+test('a fusion failure carries the provider message from every stopped panelist', async () => {
+  const f = await fixture('fusion-panel-detail')
+  try {
+    const run = await startFusion(f)
+    const reasons = [
+      { kind: 'error', error: { message: '403 Forbidden', code: 'provider/forbidden' } },
+      { kind: 'error', error: { message: 'model not found', code: 'provider/not-found' } },
+      { kind: 'error', error: { message: '403 Forbidden', code: 'provider/forbidden' } },
+    ]
+    const handles = f.driver.created.slice(0, 3)
+    for (const [index, handle] of handles.entries()) {
+      await f.driver.emit(handle, { kind: 'turn-start' })
+      await f.driver.emit(handle, { kind: 'turn-end', reason: reasons[index] })
+    }
+
+    const feed = await feedOf(f, run.id)
+    assert.ok(feed.some((event) => event.kind === 'error' && event.text.includes('Provider: 403 Forbidden [provider/forbidden]')), 'the feed repeats the provider text')
+    const failed = latestRun(f)
+    assert.equal(failed.status, 'failed')
+    const error = f.store.get(run.id).error
+    assert.match(error, /Failed models/)
+    assert.match(error, /Vega \(test\/fast\): 403 Forbidden \[provider\/forbidden\]/)
+    assert.match(error, /Orion \(test\/slow\): model not found \[provider\/not-found\]/)
+    assert.match(error, /Lyra \(test\/fast\): 403 Forbidden \[provider\/forbidden\]/)
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
 test('an empty judge answer is asked once more, then the run continues', async () => {
   const f = await fixture('fusion-judge')
   try {
@@ -1940,6 +2004,78 @@ test('sandboxMode is forwarded to the solo agent', async () => {
     assert.equal(f.driver.created.length, 1)
     assert.equal(f.driver.created[0].sandboxMode, 'read-only')
     assert.equal(f.driver.created[0].copyPath, run.copyPath)
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('a run started from an Artel task chat writes its copy', async () => {
+  const f = await fixture('start-task-chat-sandbox')
+  try {
+    await f.store.add({
+      id: 'run-task-chat',
+      sessionId: 'session-task-9',
+      originSessionId: 's1',
+      projectPath: f.projectPath,
+      task: 'Earlier step',
+      status: 'applied',
+      mode: 'solo',
+      taskChat: true,
+      chatTitle: 'Artel · Earlier step',
+      createdAt: 1,
+      updatedAt: 2,
+    })
+    const run = await f.engine.start({
+      sessionId: 'session-task-9',
+      projectPath: f.projectPath,
+      mode: 'solo',
+      task: 'Next step',
+      autoqueue: true,
+    })
+    assert.equal(f.driver.created.length, 1)
+    assert.equal(
+      f.driver.created[0].sandboxMode,
+      'workspace-write',
+      'the task chat is read-only, but its run works in a copy and must be able to edit it',
+    )
+    assert.equal(f.store.get(run.id).sandboxMode, 'workspace-write')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('an ordinary chat keeps the driver default sandbox', async () => {
+  const f = await fixture('start-chat-sandbox')
+  try {
+    const run = await f.engine.start({
+      sessionId: 's1',
+      projectPath: f.projectPath,
+      mode: 'solo',
+      task: 'Inspect the project',
+    })
+    assert.equal(f.driver.created[0].sandboxMode, undefined, 'no mode is invented for a normal chat')
+    assert.equal(f.store.get(run.id).sandboxMode, null)
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('a copy directory reports the project it was copied from', async () => {
+  const f = await fixture('project-of-copy')
+  try {
+    const run = await f.engine.start({
+      sessionId: 's1',
+      projectPath: f.projectPath,
+      mode: 'solo',
+      task: 'Inspect the project',
+    })
+    assert.equal(f.engine.projectPathForCopy(run.copyPath), f.projectPath, 'the copy root maps back')
+    assert.equal(f.engine.projectPathForCopy(path.join(run.copyPath, 'src')), f.projectPath, 'a directory inside the copy maps back too')
+    assert.equal(f.engine.projectPathForCopy(f.projectPath), null, 'a real project is not remapped')
+    assert.equal(f.engine.projectPathForCopy(''), null)
   } finally {
     await f.engine.dispose()
     await f.cleanup()
@@ -2535,6 +2671,21 @@ test('a committed run is reviewed through git and refuses apply and discard', as
 
     await f.engine.markApplied(run.id, { commit })
     assert.equal(f.engine.listRuns('s1')[0].status, 'applied')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('fileDiff refuses paths outside the run copy', async () => {
+  const f = await fixture('diff-path')
+  try {
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Change the answer' })
+    const refused = (error) => error instanceof ArtelError && error.status === 400 && /Invalid file path/.test(error.message)
+    await assert.rejects(() => f.engine.fileDiff(run.id, '../secret.txt'), refused, 'a parent segment is refused')
+    await assert.rejects(() => f.engine.fileDiff(run.id, 'src\\..\\..\\secret.txt'), refused, 'a nested parent segment is refused')
+    await assert.rejects(() => f.engine.fileDiff(run.id, path.join(f.root, 'secret.txt')), refused, 'an absolute path is refused')
+    await assert.rejects(() => f.engine.fileDiff(run.id, 'C:secret.txt'), refused, 'a drive-relative path is refused')
   } finally {
     await f.engine.dispose()
     await f.cleanup()

@@ -385,6 +385,32 @@ test('starting a run uses the body project path or resolves it', async () => {
   })
 })
 
+test('a start rejects a missing or unknown chat session before copying anything', async () => {
+  const { webServer, engine, resolved } = setup({ hasSession: (sessionId) => sessionId === 'session-1' })
+  const missing = await call(webServer.routes, `${API_PREFIX}/runs`, {
+    method: 'POST',
+    body: { mode: 'solo', task: 'Nowhere' },
+  })
+  assert.equal(missing.status, 400)
+  assert.equal(missing.body.code, 'artel/bad-request')
+  assert.equal(missing.body.error, 'sessionId is required')
+
+  const unknown = await call(webServer.routes, `${API_PREFIX}/runs`, {
+    method: 'POST',
+    body: { sessionId: 'session-nope', projectPath: 'C:\\work\\app', mode: 'solo', task: 'Nowhere' },
+  })
+  assert.equal(unknown.status, 404)
+  assert.equal(unknown.body.code, 'artel/unknown-session')
+  assert.equal(engine.calls.some((entry) => entry.method === 'start'), false, 'no agent may start for an unknown chat')
+  assert.deepEqual(resolved, [])
+
+  const known = await call(webServer.routes, `${API_PREFIX}/runs`, {
+    method: 'POST',
+    body: { sessionId: 'session-1', projectPath: 'C:\\work\\app', mode: 'solo', task: 'Copy it' },
+  })
+  assert.equal(known.status, 201)
+})
+
 test('a start can keep the chat it came from', async () => {
   const { webServer, engine } = setup()
   const response = await call(webServer.routes, `${API_PREFIX}/runs`, {
@@ -630,8 +656,8 @@ function fakeQueueRunner() {
       calls.push({ method: 'postponeVersion', args: [sessionId, runId] })
       return { sessionId, ignored: [runId] }
     },
-    async branchesSummary(sessionId) {
-      calls.push({ method: 'branchesSummary', args: [sessionId] })
+    async branchesSummary(sessionId, options) {
+      calls.push({ method: 'branchesSummary', args: [sessionId, options] })
       return {
         queue: { sessionId },
         project: { head: 'a'.repeat(40), repoDir: 'C:\\state\\repos\\key.git', drift: { dirty: false, files: [] } },
@@ -639,54 +665,54 @@ function fakeQueueRunner() {
         branches: [{ id: 'b-1', name: 'Main', ref: 'refs/heads/artel/b-1', baseCommit: 'a'.repeat(40), tipCommit: null }],
       }
     },
-    async createBranch(sessionId, input) {
-      calls.push({ method: 'createBranch', args: [sessionId, input] })
+    async createBranch(sessionId, input, options) {
+      calls.push({ method: 'createBranch', args: [sessionId, input, options] })
       return { branch: { id: 'b-2', name: input.name }, branches: [] }
     },
-    async renameBranch(sessionId, branchId, name) {
-      calls.push({ method: 'renameBranch', args: [sessionId, branchId, name] })
+    async renameBranch(sessionId, branchId, name, options) {
+      calls.push({ method: 'renameBranch', args: [sessionId, branchId, name, options] })
       return { currentBranchId: branchId, branches: [] }
     },
-    async switchBranch(sessionId, branchId) {
-      calls.push({ method: 'switchBranch', args: [sessionId, branchId] })
+    async switchBranch(sessionId, branchId, options) {
+      calls.push({ method: 'switchBranch', args: [sessionId, branchId, options] })
       return { currentBranchId: branchId, branches: [] }
     },
-    async removeBranch(sessionId, branchId) {
-      calls.push({ method: 'removeBranch', args: [sessionId, branchId] })
+    async removeBranch(sessionId, branchId, options) {
+      calls.push({ method: 'removeBranch', args: [sessionId, branchId, options] })
       return { currentBranchId: null, branches: [] }
     },
-    async branchCommits(sessionId, branchId) {
-      calls.push({ method: 'branchCommits', args: [sessionId, branchId] })
+    async branchCommits(sessionId, branchId, options) {
+      calls.push({ method: 'branchCommits', args: [sessionId, branchId, options] })
       return [{ commit: 'c'.repeat(40), parents: ['a'.repeat(40)], subject: 'Answer two', date: '2026-11-21T00:00:00.000Z', files: ['src/app.js'], changeCount: 1 }]
     },
-    async applyBranch(sessionId, input) {
-      calls.push({ method: 'applyBranch', args: [sessionId, input] })
+    async applyBranch(sessionId, input, options) {
+      calls.push({ method: 'applyBranch', args: [sessionId, input, options] })
       return { applied: { branchId: input.branchId, commit: 'c'.repeat(40), files: 1 }, check: null }
     },
-    async mergeBranches(sessionId, input) {
-      calls.push({ method: 'mergeBranches', args: [sessionId, input] })
+    async mergeBranches(sessionId, input, options) {
+      calls.push({ method: 'mergeBranches', args: [sessionId, input, options] })
       return { mergeCommit: 'd'.repeat(40), check: null }
     },
-    async projectState(sessionId) {
-      calls.push({ method: 'projectState', args: [sessionId] })
+    async projectState(sessionId, options) {
+      calls.push({ method: 'projectState', args: [sessionId, options] })
       return { head: 'a'.repeat(40), branchId: 'b-1', drift: { dirty: false, files: [] } }
     },
-    async exportBranch(sessionId, input) {
-      calls.push({ method: 'exportBranch', args: [sessionId, input] })
+    async exportBranch(sessionId, input, options) {
+      calls.push({ method: 'exportBranch', args: [sessionId, input, options] })
       return {
         queue: { sessionId },
         exported: { target: input?.target ?? 'refs/heads/artel/b-1', commit: 'a'.repeat(40), at: 10 },
       }
     },
-    async revertApply(sessionId, input) {
-      calls.push({ method: 'revertApply', args: [sessionId, input] })
+    async revertApply(sessionId, input, options) {
+      calls.push({ method: 'revertApply', args: [sessionId, input, options] })
       return {
         queue: { sessionId },
         reverted: { branchId: input?.branchId ?? 'b-1', branchName: 'Main', commit: 'b'.repeat(40), undone: 'c'.repeat(40) },
       }
     },
-    async maintenance(sessionId) {
-      calls.push({ method: 'maintenance', args: [sessionId] })
+    async maintenance(sessionId, options) {
+      calls.push({ method: 'maintenance', args: [sessionId, options] })
       return {
         before: { objects: 5, sizeBytes: 4096, sizeText: '4.0 KiB' },
         after: { objects: 4, sizeBytes: 2048, sizeText: '2.0 KiB' },
@@ -831,6 +857,57 @@ test('the queue route forwards new tasks to addTasks', async () => {
   const noSession = await call(webServer.routes, `${API_PREFIX}/queue`, { method: 'POST', body: { texts: ['x'] } })
   assert.equal(noSession.status, 400)
   assert.equal(noSession.body.code, 'artel/bad-request')
+
+  const empty = await call(webServer.routes, `${API_PREFIX}/queue`, { method: 'POST', body: { sessionId: 's1', texts: [], task: '   ' } })
+  assert.equal(empty.status, 400)
+  assert.equal(empty.body.code, 'artel/bad-request')
+  assert.equal(queueRunner.calls.at(-1).method, 'addTasks', 'the empty batch never reaches the runner')
+})
+
+test('a stale session id never borrows the fallback project directory', async () => {
+  const unknown = async () => {
+    const error = new Error('Unknown chat session')
+    error.status = 404
+    error.code = 'artel/unknown-session'
+    throw error
+  }
+  const { webServer } = setup({ resolveProjectPath: unknown, queueRunner: fakeQueueRunner() })
+  for (const path of [`${API_PREFIX}/project?sessionId=ghost`, `${API_PREFIX}/queue?sessionId=ghost`]) {
+    const response = await call(webServer.routes, path)
+    assert.equal(response.status, 404, path)
+    assert.equal(response.body.code, 'artel/unknown-session', path)
+  }
+})
+
+test('the queue branch routes reject a stale session id instead of borrowing the fallback', async () => {
+  const unknown = async () => {
+    const error = new Error('Unknown chat session')
+    error.status = 404
+    error.code = 'artel/unknown-session'
+    throw error
+  }
+  const queueRunner = fakeQueueRunner()
+  const { webServer } = setup({ resolveProjectPath: unknown, queueRunner })
+  const requests = [
+    ['GET', `${API_PREFIX}/queue/branches?sessionId=ghost`],
+    ['POST', `${API_PREFIX}/queue/branches`, { sessionId: 'ghost', name: 'Night' }],
+    ['PATCH', `${API_PREFIX}/queue/branches/b-1`, { sessionId: 'ghost', name: 'Renamed' }],
+    ['DELETE', `${API_PREFIX}/queue/branches/b-1?sessionId=ghost`],
+    ['POST', `${API_PREFIX}/queue/branches/b-1/switch`, { sessionId: 'ghost' }],
+    ['GET', `${API_PREFIX}/queue/branches/b-1/commits?sessionId=ghost`],
+    ['POST', `${API_PREFIX}/queue/branches/b-1/apply`, { sessionId: 'ghost' }],
+    ['POST', `${API_PREFIX}/queue/branches/b-1/merge`, { sessionId: 'ghost', sourceBranchId: 'b-2' }],
+    ['POST', `${API_PREFIX}/queue/branches/b-1/export`, { sessionId: 'ghost' }],
+    ['POST', `${API_PREFIX}/queue/branches/b-1/revert`, { sessionId: 'ghost' }],
+    ['GET', `${API_PREFIX}/queue/project-state?sessionId=ghost`],
+    ['POST', `${API_PREFIX}/queue/maintenance`, { sessionId: 'ghost' }],
+  ]
+  for (const [method, target, body] of requests) {
+    const response = await call(webServer.routes, target, body === undefined ? { method } : { method, body })
+    assert.equal(response.status, 404, `${method} ${target}`)
+    assert.equal(response.body.code, 'artel/unknown-session', `${method} ${target}`)
+  }
+  assert.deepEqual(queueRunner.calls, [], 'a stale session never reaches the runner')
 })
 
 test('the queue route forwards a per-task branch id only when it is set', async () => {
@@ -892,7 +969,7 @@ test('the queue branch routes forward branch operations', async () => {
   const list = await call(webServer.routes, `${API_PREFIX}/queue/branches?sessionId=s1`)
   assert.equal(list.status, 200)
   assert.equal(list.body.currentBranchId, 'b-1')
-  assert.deepEqual(queueRunner.calls.at(-1), { method: 'branchesSummary', args: ['s1'] })
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'branchesSummary', args: ['s1', { projectPath: 'C:\\work\\app' }] })
 
   const created = await call(webServer.routes, `${API_PREFIX}/queue/branches`, {
     method: 'POST',
@@ -901,7 +978,7 @@ test('the queue branch routes forward branch operations', async () => {
   assert.equal(created.status, 200)
   assert.deepEqual(queueRunner.calls.at(-1), {
     method: 'createBranch',
-    args: ['s1', { name: 'Night', fromCommit: 'a'.repeat(40), switchTo: true }],
+    args: ['s1', { name: 'Night', fromCommit: 'a'.repeat(40), switchTo: true }, { projectPath: 'C:\\work\\app' }],
   })
 
   const renamed = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1`, {
@@ -909,19 +986,19 @@ test('the queue branch routes forward branch operations', async () => {
     body: { sessionId: 's1', name: 'Renamed' },
   })
   assert.equal(renamed.status, 200)
-  assert.deepEqual(queueRunner.calls.at(-1), { method: 'renameBranch', args: ['s1', 'b-1', 'Renamed'] })
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'renameBranch', args: ['s1', 'b-1', 'Renamed', { projectPath: 'C:\\work\\app' }] })
 
   const switched = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1/switch`, {
     method: 'POST',
     body: { sessionId: 's1' },
   })
   assert.equal(switched.status, 200)
-  assert.deepEqual(queueRunner.calls.at(-1), { method: 'switchBranch', args: ['s1', 'b-1'] })
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'switchBranch', args: ['s1', 'b-1', { projectPath: 'C:\\work\\app' }] })
 
   const commits = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1/commits?sessionId=s1`)
   assert.equal(commits.status, 200)
   assert.equal(commits.body.commits[0].subject, 'Answer two')
-  assert.deepEqual(queueRunner.calls.at(-1), { method: 'branchCommits', args: ['s1', 'b-1'] })
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'branchCommits', args: ['s1', 'b-1', { projectPath: 'C:\\work\\app' }] })
 
   const applied = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1/apply`, {
     method: 'POST',
@@ -930,7 +1007,7 @@ test('the queue branch routes forward branch operations', async () => {
   assert.equal(applied.status, 200)
   assert.deepEqual(queueRunner.calls.at(-1), {
     method: 'applyBranch',
-    args: ['s1', { branchId: 'b-1', commitIds: ['c1'], confirmDrift: true, checkCommand: 'npm test', force: true }],
+    args: ['s1', { branchId: 'b-1', commitIds: ['c1'], confirmDrift: true, checkCommand: 'npm test', force: true }, { projectPath: 'C:\\work\\app' }],
   })
 
   const merged = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1/merge`, {
@@ -940,16 +1017,16 @@ test('the queue branch routes forward branch operations', async () => {
   assert.equal(merged.status, 200)
   assert.deepEqual(queueRunner.calls.at(-1), {
     method: 'mergeBranches',
-    args: ['s1', { targetBranchId: 'b-1', sourceBranchId: 'b-2', checkCommand: '', force: false }],
+    args: ['s1', { targetBranchId: 'b-1', sourceBranchId: 'b-2', checkCommand: '', force: false }, { projectPath: 'C:\\work\\app' }],
   })
 
   const removed = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1?sessionId=s1`, { method: 'DELETE' })
   assert.equal(removed.status, 200)
-  assert.deepEqual(queueRunner.calls.at(-1), { method: 'removeBranch', args: ['s1', 'b-1'] })
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'removeBranch', args: ['s1', 'b-1', { projectPath: 'C:\\work\\app' }] })
 
   const project = await call(webServer.routes, `${API_PREFIX}/queue/project-state?sessionId=s1`)
   assert.equal(project.status, 200)
-  assert.deepEqual(queueRunner.calls.at(-1), { method: 'projectState', args: ['s1'] })
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'projectState', args: ['s1', { projectPath: 'C:\\work\\app' }] })
 
   const wrongMethod = await call(webServer.routes, `${API_PREFIX}/queue/branches?sessionId=s1`, { method: 'PUT' })
   assert.equal(wrongMethod.status, 405)
@@ -970,7 +1047,7 @@ test('the queue branch export and revert routes forward their inputs', async () 
   assert.equal(exported.body.exported.target, 'refs/heads/artel/custom')
   assert.deepEqual(queueRunner.calls.at(-1), {
     method: 'exportBranch',
-    args: ['s1', { branchId: 'b-1', target: 'refs/heads/artel/custom' }],
+    args: ['s1', { branchId: 'b-1', target: 'refs/heads/artel/custom' }, { projectPath: 'C:\\work\\app' }],
   })
 
   const automatic = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1/export`, {
@@ -980,7 +1057,7 @@ test('the queue branch export and revert routes forward their inputs', async () 
   assert.equal(automatic.status, 200)
   assert.deepEqual(queueRunner.calls.at(-1), {
     method: 'exportBranch',
-    args: ['s1', { branchId: 'b-1', target: null }],
+    args: ['s1', { branchId: 'b-1', target: null }, { projectPath: 'C:\\work\\app' }],
   })
 
   const reverted = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1/revert`, {
@@ -990,7 +1067,7 @@ test('the queue branch export and revert routes forward their inputs', async () 
   assert.equal(reverted.status, 200)
   assert.equal(reverted.body.reverted.branchId, 'b-1')
   // Revert refuses drift instead of overriding it: no force flag is forwarded.
-  assert.deepEqual(queueRunner.calls.at(-1), { method: 'revertApply', args: ['s1', { branchId: 'b-1' }] })
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'revertApply', args: ['s1', { branchId: 'b-1' }, { projectPath: 'C:\\work\\app' }] })
 
   const noSession = await call(webServer.routes, `${API_PREFIX}/queue/branches/b-1/revert`, { method: 'POST', body: {} })
   assert.equal(noSession.status, 400)
@@ -1013,7 +1090,7 @@ test('the queue maintenance route runs the cleanup for the session', async () =>
   assert.equal(response.body.freedBytes, 2048)
   assert.equal(response.body.before.objects, 5)
   assert.equal(response.body.after.objects, 4)
-  assert.deepEqual(queueRunner.calls.at(-1), { method: 'maintenance', args: ['s1'] })
+  assert.deepEqual(queueRunner.calls.at(-1), { method: 'maintenance', args: ['s1', { projectPath: 'C:\\work\\app' }] })
 
   const noSession = await call(webServer.routes, `${API_PREFIX}/queue/maintenance`, { method: 'POST', body: {} })
   assert.equal(noSession.status, 400)
@@ -1103,6 +1180,18 @@ test('the queue autopilot route forwards its flags and decisions', async () => {
   assert.equal(wrongMethod.status, 405)
 })
 
+test('the queue autopilot route rejects a non-boolean toggle', async () => {
+  const queueRunner = fakeQueueRunner()
+  const { webServer } = setup({ queueRunner })
+  const response = await call(webServer.routes, `${API_PREFIX}/queue/autopilot`, {
+    method: 'POST',
+    body: { sessionId: 's1', autopilot: 'yes' },
+  })
+  assert.equal(response.status, 400)
+  assert.equal(response.body.code, 'artel/bad-request')
+  assert.equal(queueRunner.calls.length, 0, 'the runner must not be called for an invalid toggle')
+})
+
 test('the queue task and version sub-routes forward ids and verbs', async () => {
   const queueRunner = fakeQueueRunner()
   const { webServer } = setup({ queueRunner })
@@ -1111,6 +1200,12 @@ test('the queue task and version sub-routes forward ids and verbs', async () => 
 
   await call(webServer.routes, `${API_PREFIX}/queue/tasks/t-1/move`, { method: 'POST', body: { sessionId: 's1', direction: 'down' } })
   assert.deepEqual(queueRunner.calls.at(-1), { method: 'moveTask', args: ['s1', 't-1', { direction: 'down' }] })
+
+  const beforeInvalidDirection = queueRunner.calls.length
+  const badDirection = await call(webServer.routes, `${API_PREFIX}/queue/tasks/t-1/move`, { method: 'POST', body: { sessionId: 's1', direction: 'sideways' } })
+  assert.equal(badDirection.status, 400)
+  assert.equal(badDirection.body.code, 'artel/bad-request')
+  assert.equal(queueRunner.calls.length, beforeInvalidDirection, 'an invalid direction must not reach the runner')
 
   await call(webServer.routes, `${API_PREFIX}/queue/tasks/t-1?sessionId=s1`, { method: 'DELETE' })
   assert.deepEqual(queueRunner.calls.at(-1), { method: 'removeTask', args: ['s1', 't-1'] })
@@ -1146,6 +1241,10 @@ test('the factory route lists, creates and views boards', async () => {
   const missing = await call(webServer.routes, `${API_PREFIX}/factory`, { method: 'POST', body: {} })
   assert.equal(missing.status, 400)
   assert.equal(missing.body.error, 'projectPath is required')
+
+  const blank = await call(webServer.routes, `${API_PREFIX}/factory`, { method: 'POST', body: { projectPath: '   ' } })
+  assert.equal(blank.status, 400)
+  assert.equal(blank.body.error, 'projectPath is required')
 
   const created = await call(webServer.routes, `${API_PREFIX}/factory`, { method: 'POST', body: { projectPath: 'C:\\work\\app', name: 'Demo' } })
   assert.equal(created.status, 200)

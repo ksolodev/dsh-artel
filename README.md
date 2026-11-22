@@ -364,6 +364,12 @@ On its first start the Host moves the previous data root from `<DSH home>/forge/
 changed with the name: an open Forge page does not restore Artel, so restart DeepSeek Harness and open
 Artel once from the chat composer.
 
+`<profile>` is the profile the Host launched Artel in, read from the launcher's `profileContext` rather
+than from `DSH_PROFILE` alone, so the desktop app and `dsh web` share the same per-profile directory.
+A build that started without that information could write to `<DSH home>/artel/default`; on the first
+start of this build that directory is moved to `<DSH home>/artel/<profile>` when the target does not
+exist yet — an existing profile directory is never merged or overwritten.
+
 ## Requirements
 
 - DSH `^0.2.2-rc.1` with a Host that provides the session controller (the desktop app or `dsh web`).

@@ -668,9 +668,13 @@ pipeline and `#step` drives the current stage:
   ticket waits as `repair-exhausted` (`repairAction` accepts another round, accepts as is, or postpones). Passing
   review moves the ticket to `ready` («Готово к PR»).
 - **PR / merge** — `openPullRequest` only from `ready` and only on a clean tree: branch `factory/ticket-<number>`,
-  apply the ticket run into the real project, `git add -A`, commit, push, `gh pr create` with `prBody` (spec,
-  criteria, checks, assumptions, minor notes); `mergeTicket` applies the cumulative diff without a branch. Both
-  are user buttons; the pipe itself never pushes, merges or sends anything outward.
+  apply the ticket run into the real project, `git add -A`, commit (with the factory's own `user.name`/`user.email`,
+  so a machine without a global identity still commits), push, `gh pr create` with `prBody` (spec,
+  criteria, checks, assumptions, minor notes); `mergeTicket` applies the cumulative diff without a branch. A retry
+  after a failed commit or push resumes: a version already `applied` is not applied again, the branch the failed
+  attempt created is reused, the applied changes in the worktree are committed, and `mergeTicket` finishes such a
+  ticket instead of refusing it (#36). Both are user buttons; the pipe itself never pushes, merges or sends anything
+  outward.
 - **intake** — tickets are created in «Входящие», imported from GitHub issues (`parseIssueRef` in
   `lib/trackers.js` accepts `#12`, `owner/repo#12` and an issue URL, `gh issue view` fetches it), or pulled from a
   board's trackers: GitHub, GitLab, Jira and Linear through `listTrackerIssues`, with `commentTrackerIssue` as

@@ -53,6 +53,14 @@ All notable changes to this project are documented here. The format follows
   the raw `swarm`/`SWARM` and the console warned about the missing key on every render. `role.swarm`,
   `role.fixer` (the Orchestrator repair agent) and the `role.agent` fallback now exist in all three catalogs;
   an unknown role still stays raw.
+- **A retry after a failed Pull Request resumes instead of dead-ending (#36).** The PR applied the version and
+  only then committed; when the commit failed (a machine without a global git identity) or the push was
+  rejected, the ticket stayed `ready` while its run was already `applied`, so every retry answered
+  `409 factory/apply-failed` («You cannot apply a applied run») and only Return recovered the ticket. The
+  factory now resumes: an applied version is never applied again, the branch the failed attempt created is
+  reused, and only the missing steps run, while the applied changes in the worktree are committed rather than
+  refused. The factory commit carries its own `user.name`/`user.email`, so a machine without a global identity
+  no longer fails the step; «Влить» finishes a ticket whose version is already applied the same way.
 - **The data root follows the profile the Host runs in.** The Host half reads the profile name from the
   launcher's `profileContext` instead of relying on `DSH_PROFILE` alone, so the desktop app and `dsh web`
   use `<DSH home>/artel/<profile>` as documented. A data root left in `<DSH home>/artel/default` by an

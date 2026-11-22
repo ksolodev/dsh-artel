@@ -584,3 +584,93 @@ test('revertApply() refuses an empty history and a dirty project', async () => {
     await fx.cleanup()
   }
 })
+
+test('apply() restores the branch changes when its own apply was reverted (#22)', async () => {
+  const fx = await fixture()
+  try {
+    const { branch } = await fx.service.createBranch('s1', { name: 'Restore' })
+    const commit = await commitOnBranch(fx, branch, { file: 'src/app.js', content: 'export const answer = 2\n', subject: 'Answer 2' })
+    await fx.service.apply('s1', { branchId: branch.id })
+    const reverted = await fx.service.revertApply('s1')
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 1\n')
+
+    const again = await fx.service.apply('s1', { branchId: branch.id })
+
+    assert.equal(again.applied.files, 1)
+    assert.notEqual(again.applied.commit, reverted.reverted.revertCommit)
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 2\n')
+    const git = await fx.service.ensure('s1')
+    assert.equal(await git.isAncestor(commit, again.applied.commit), true, 'the branch commit stays in the applied history')
+    assert.equal((await fx.store.get('s1')).project.head, again.applied.commit)
+  } finally {
+    await fx.cleanup()
+  }
+})
+
+test('apply() restores the branch changes over confirmed drift after a revert (#22)', async () => {
+  const fx = await fixture()
+  try {
+    const { branch } = await fx.service.createBranch('s1', { name: 'Drift restore' })
+    await commitOnBranch(fx, branch, { file: 'src/app.js', content: 'export const answer = 2\n', subject: 'Answer 2' })
+    await fx.service.apply('s1', { branchId: branch.id })
+    await fx.service.revertApply('s1')
+    await fs.writeFile(path.join(fx.projectPath, 'README.md'), '# Local edit\n')
+
+    const result = await fx.service.apply('s1', { branchId: branch.id, confirmDrift: true })
+
+    assert.match(result.applied.driftCommit, /^[0-9a-f]{40}$/)
+    assert.equal(result.applied.files, 1, 'only the branch file changed on top of the drift commit')
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 2\n')
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'README.md'), 'utf8'), '# Local edit\n', 'the drift edit is kept')
+    assert.equal((await fx.service.projectState('s1')).drift.dirty, false)
+  } finally {
+    await fx.cleanup()
+  }
+})
+
+test('apply() refuses a branch that is already applied instead of adding an empty commit', async () => {
+  const fx = await fixture()
+  try {
+    const { branch } = await fx.service.createBranch('s1', { name: 'Once' })
+    const commit = await commitOnBranch(fx, branch, { file: 'src/app.js', content: 'export const answer = 2\n', subject: 'Answer 2' })
+    await fx.service.apply('s1', { branchId: branch.id })
+
+    await assert.rejects(fx.service.apply('s1', { branchId: branch.id }), (error) => {
+      assert.ok(error instanceof BranchError)
+      assert.equal(error.status, 409)
+      assert.equal(error.code, 'artel/apply-unchanged')
+      return true
+    })
+
+    const queue = await fx.store.get('s1')
+    assert.equal(queue.project.head, commit, 'the head did not move')
+    assert.equal(queue.project.applies.length, 1, 'no second apply was recorded')
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 2\n')
+  } finally {
+    await fx.cleanup()
+  }
+})
+
+test('merge() refuses a source that adds nothing new instead of moving the target branch', async () => {
+  const fx = await fixture()
+  try {
+    const { branch: main } = await fx.service.createBranch('s1', { name: 'Main' })
+    const { branch: side } = await fx.service.createBranch('s1', { name: 'Side', fromCommit: main.baseCommit })
+    await commitOnBranch(fx, main, { file: 'README.md', content: '# Main\n', subject: 'Main note' })
+    await commitOnBranch(fx, side, { file: 'src/app.js', content: 'export const answer = 2\n', subject: 'Side answer' })
+    const first = await fx.service.merge('s1', { targetBranchId: main.id, sourceBranchId: side.id })
+
+    await assert.rejects(fx.service.merge('s1', { targetBranchId: main.id, sourceBranchId: side.id }), (error) => {
+      assert.ok(error instanceof BranchError)
+      assert.equal(error.status, 409)
+      assert.equal(error.code, 'artel/merge-unchanged')
+      return true
+    })
+
+    const git = await fx.service.ensure('s1')
+    assert.equal(await git.ref(main.ref), first.mergeCommit, 'the target ref did not move')
+    assert.equal((await fx.store.get('s1')).branches.find((entry) => entry.id === main.id).tipCommit, first.mergeCommit)
+  } finally {
+    await fx.cleanup()
+  }
+})

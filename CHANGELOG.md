@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **Re-applying a branch after its revert lands the changes again (#22).** The apply used to merge the
+  branch tip into the applied tip; when that tip was already in the history (right after `revertApply`, for
+  example) git answered «Already up to date», an empty commit moved `refs/heads/applied` and the project kept
+  the old files while the branch was marked applied. The branch commits are now cherry-picked onto the
+  applied tip, and a result that changes no file is refused with `409 artel/apply-unchanged` — the project,
+  the applied ref and the branch stay as they were. A merge that ends without a single file change is
+  refused the same way with `409 artel/merge-unchanged`.
 - **The data root follows the profile the Host runs in.** The Host half reads the profile name from the
   launcher's `profileContext` instead of relying on `DSH_PROFILE` alone, so the desktop app and `dsh web`
   use `<DSH home>/artel/<profile>` as documented. A data root left in `<DSH home>/artel/default` by an

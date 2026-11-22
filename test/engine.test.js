@@ -303,6 +303,34 @@ test('the run phase tracks the latest status line, even on terminal runs', async
   }
 })
 
+test('the run keeps the tokens it spent after its live agents are released', async () => {
+  const f = await fixture('spend-kept')
+  try {
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Change the answer' })
+    const handle = f.driver.created[0]
+    f.driver.stats.set(handle.sessionId, {
+      context: null,
+      usage: { inputTokens: 900, outputTokens: 100, cacheReadTokens: 100, cacheWriteTokens: 100, totalTokens: 1_200, requests: 1 },
+    })
+
+    await f.engine.discard(run.id)
+    const summary = f.engine.getRun(run.id)
+    assert.equal(summary.status, 'discarded')
+    assert.deepEqual(summary.spend, {
+      inputTokens: 900,
+      outputTokens: 100,
+      cacheReadTokens: 100,
+      cacheWriteTokens: 100,
+      totalTokens: 1_200,
+      requests: 1,
+    }, 'the token tag survives the Released agents')
+    assert.equal(f.engine.listRuns('s1')[0].spend.totalTokens, 1_200, 'the saved record carries the counters across a restart')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
 test('the run summary says what each agent is doing and what the run waits for', async () => {
   const f = await fixture('live-view')
   try {

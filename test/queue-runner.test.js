@@ -393,6 +393,35 @@ test('setAutopilot starts the pump with autoqueue and no base version', async ()
   }
 })
 
+test('a second autopilot run starts from zero after the first hit its limit', async () => {
+  const f = await fixture('autopilot-restart')
+  try {
+    await f.runner.addTasks({ sessionId: 's1', projectPath: f.projectPath, texts: ['Second run task'] })
+    const stale = f.store.get('s1')
+    stale.stats = { taken: 1, passed: 1, parked: 0, consecutiveParks: 0, startedAt: 1 }
+    stale.limit = 1
+    stale.stopReason = 'limit'
+    await f.store.replace('s1', stale)
+
+    const before = await f.summary()
+    assert.equal(before.autopilot, false)
+    assert.equal(before.running, false)
+    assert.equal(before.counts.queued, 1)
+
+    await f.runner.setAutopilot({
+      sessionId: 's1',
+      projectPath: f.projectPath,
+      autopilot: true,
+      limit: 1,
+      checkCommand: 'node -e "process.exit(0)"',
+    })
+    const start = await waitFor(() => f.engine.lastCall('start'))
+    assert.equal(start.request.task, 'Second run task')
+  } finally {
+    await f.cleanup()
+  }
+})
+
 test('setAutopilot blocks on pending versions until a decision is made', async () => {
   const f = await fixture('autopilot-blocked')
   try {

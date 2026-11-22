@@ -555,8 +555,14 @@ test('message wakes idle agents, interrupt stops them, discard removes the copy'
     assert.equal(interrupted.status, 'interrupted')
     assert.deepEqual(f.driver.interrupted, [handle.name])
 
-    await f.engine.discard(run.id)
-    assert.equal(f.engine.listRuns('s1')[0].status, 'discarded')
+    const discarded = await f.engine.discard(run.id)
+    assert.equal(discarded.status, 'discarded')
+    assert.equal(discarded.changeCount, 0, 'the header no longer claims changes after the copy is gone')
+    const finalFeed = await f.engine.readFeed(run.id, { cursor: 0 })
+    assert.ok(
+      finalFeed.events.some((event) => event.kind === 'status' && event.key === 'feed.finish.discarded'),
+      'the feed records the discard instead of leaving the stop message in place',
+    )
     await assert.rejects(() => fs.stat(run.copyPath), /ENOENT/)
   } finally {
     await f.engine.dispose()
@@ -2535,6 +2541,21 @@ test('a committed run is reviewed through git and refuses apply and discard', as
 
     await f.engine.markApplied(run.id, { commit })
     assert.equal(f.engine.listRuns('s1')[0].status, 'applied')
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
+test('fileDiff refuses paths outside the run copy', async () => {
+  const f = await fixture('diff-path')
+  try {
+    const run = await f.engine.start({ sessionId: 's1', projectPath: f.projectPath, mode: 'solo', task: 'Change the answer' })
+    const refused = (error) => error instanceof ArtelError && error.status === 400 && /Invalid file path/.test(error.message)
+    await assert.rejects(() => f.engine.fileDiff(run.id, '../secret.txt'), refused, 'a parent segment is refused')
+    await assert.rejects(() => f.engine.fileDiff(run.id, 'src\\..\\..\\secret.txt'), refused, 'a nested parent segment is refused')
+    await assert.rejects(() => f.engine.fileDiff(run.id, path.join(f.root, 'secret.txt')), refused, 'an absolute path is refused')
+    await assert.rejects(() => f.engine.fileDiff(run.id, 'C:secret.txt'), refused, 'a drive-relative path is refused')
   } finally {
     await f.engine.dispose()
     await f.cleanup()

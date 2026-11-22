@@ -385,6 +385,32 @@ test('starting a run uses the body project path or resolves it', async () => {
   })
 })
 
+test('a start rejects a missing or unknown chat session before copying anything', async () => {
+  const { webServer, engine, resolved } = setup({ hasSession: (sessionId) => sessionId === 'session-1' })
+  const missing = await call(webServer.routes, `${API_PREFIX}/runs`, {
+    method: 'POST',
+    body: { mode: 'solo', task: 'Nowhere' },
+  })
+  assert.equal(missing.status, 400)
+  assert.equal(missing.body.code, 'artel/bad-request')
+  assert.equal(missing.body.error, 'sessionId is required')
+
+  const unknown = await call(webServer.routes, `${API_PREFIX}/runs`, {
+    method: 'POST',
+    body: { sessionId: 'session-nope', projectPath: 'C:\\work\\app', mode: 'solo', task: 'Nowhere' },
+  })
+  assert.equal(unknown.status, 404)
+  assert.equal(unknown.body.code, 'artel/unknown-session')
+  assert.equal(engine.calls.some((entry) => entry.method === 'start'), false, 'no agent may start for an unknown chat')
+  assert.deepEqual(resolved, [])
+
+  const known = await call(webServer.routes, `${API_PREFIX}/runs`, {
+    method: 'POST',
+    body: { sessionId: 'session-1', projectPath: 'C:\\work\\app', mode: 'solo', task: 'Copy it' },
+  })
+  assert.equal(known.status, 201)
+})
+
 test('a start can keep the chat it came from', async () => {
   const { webServer, engine } = setup()
   const response = await call(webServer.routes, `${API_PREFIX}/runs`, {
@@ -831,6 +857,26 @@ test('the queue route forwards new tasks to addTasks', async () => {
   const noSession = await call(webServer.routes, `${API_PREFIX}/queue`, { method: 'POST', body: { texts: ['x'] } })
   assert.equal(noSession.status, 400)
   assert.equal(noSession.body.code, 'artel/bad-request')
+
+  const empty = await call(webServer.routes, `${API_PREFIX}/queue`, { method: 'POST', body: { sessionId: 's1', texts: [], task: '   ' } })
+  assert.equal(empty.status, 400)
+  assert.equal(empty.body.code, 'artel/bad-request')
+  assert.equal(queueRunner.calls.at(-1).method, 'addTasks', 'the empty batch never reaches the runner')
+})
+
+test('a stale session id never borrows the fallback project directory', async () => {
+  const unknown = async () => {
+    const error = new Error('Unknown chat session')
+    error.status = 404
+    error.code = 'artel/unknown-session'
+    throw error
+  }
+  const { webServer } = setup({ resolveProjectPath: unknown, queueRunner: fakeQueueRunner() })
+  for (const path of [`${API_PREFIX}/project?sessionId=ghost`, `${API_PREFIX}/queue?sessionId=ghost`]) {
+    const response = await call(webServer.routes, path)
+    assert.equal(response.status, 404, path)
+    assert.equal(response.body.code, 'artel/unknown-session', path)
+  }
 })
 
 test('the queue route forwards a per-task branch id only when it is set', async () => {
@@ -1101,6 +1147,18 @@ test('the queue autopilot route forwards its flags and decisions', async () => {
 
   const wrongMethod = await call(webServer.routes, `${API_PREFIX}/queue/autopilot`)
   assert.equal(wrongMethod.status, 405)
+})
+
+test('the queue autopilot route rejects a non-boolean toggle', async () => {
+  const queueRunner = fakeQueueRunner()
+  const { webServer } = setup({ queueRunner })
+  const response = await call(webServer.routes, `${API_PREFIX}/queue/autopilot`, {
+    method: 'POST',
+    body: { sessionId: 's1', autopilot: 'yes' },
+  })
+  assert.equal(response.status, 400)
+  assert.equal(response.body.code, 'artel/bad-request')
+  assert.equal(queueRunner.calls.length, 0, 'the runner must not be called for an invalid toggle')
 })
 
 test('the queue task and version sub-routes forward ids and verbs', async () => {

@@ -723,6 +723,8 @@ pipeline and `#step` drives the current stage:
 `strings` catalog. `tools/build-locales.mjs` compiles the catalogs into the generated block in `lib/client.js`; `--check`
 (run by `npm test`) fails when the block is stale, when a non-plural key is missing, when a locale has the wrong plural
 categories, or when placeholders differ from English. Adding a language is a data change: one JSON file, no code edit.
+Role labels are looked up as `role.<id>`; the ids the engine stores are `agent`, `swarm` and `fixer`, and any other
+id stays raw.
 
 The Host never imports translations. It emits `{ key, params, text }` records; the client resolves the key against the
 active language and falls back to the English `text` for data persisted by older versions. The active language lives in

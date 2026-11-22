@@ -2071,7 +2071,7 @@ test('modeLabel, agentProgress and agentRole know the conductor', () => {
   assert.equal(debug.agentRole(ruT, conductorRun, 'Iris'), 'дирижёр', 'the conductor role is translated')
   assert.equal(debug.agentRole(ruT, conductorRun, 'Vega'), 'агент', 'the worker role is translated')
   assert.equal(debug.agentRole(ruT, DEFAULT_RUN, 'Nova'), 'dev', 'a role without a dictionary key stays raw')
-  assert.equal(debug.agentRole(ruT, conductorRun, 'Nobody'), 'agent', 'an unknown agent keeps the plain fallback role')
+  assert.equal(debug.agentRole(ruT, conductorRun, 'Nobody'), 'агент', 'an unknown agent keeps the localized fallback role')
 
   const fusionRun = {
     mode: 'fusion',
@@ -2463,7 +2463,7 @@ test('orchestrator helpers map plan parts to progress, labels and merge guards',
   assert.equal(debug.roleLabel(ruT, 'reviewer'), 'Проверяющий')
   assert.equal(debug.roleLabel(ruT, 'merger'), 'Сборщик')
   assert.equal(debug.roleLabel(ruT, 'mystery-role'), 'mystery-role', 'an unknown role stays raw')
-  assert.equal(debug.roleLabel(ruT, undefined), 'agent', 'a missing role keeps the untranslated agent fallback')
+  assert.equal(debug.roleLabel(ruT, undefined), 'агент', 'a missing role uses the localized agent fallback')
 
   assert.equal(debug.partStatusTone('pending'), 'muted')
   assert.equal(debug.partStatusTone('working'), 'active')
@@ -2500,6 +2500,27 @@ test('orchestrator helpers map plan parts to progress, labels and merge guards',
   assert.equal(debug.agentRole(ruT, ORCHESTRATOR_RUN, 'Vega'), 'Агент части')
   assert.equal(debug.agentRole(ruT, ORCHESTRATOR_RUN, 'Rill'), 'Проверяющий')
   assert.equal(debug.agentRole(ruT, ORCHESTRATOR_RUN, 'Atlas'), 'Сборщик')
+})
+
+test('the swarm, repair and fallback role labels are localized (#34)', () => {
+  const state = setup()
+  const debug = state.realm.window.__DSH_ARTEL_DEBUG__
+  const t = (locale) => (key) => (debug.dictionaries[locale][key] !== undefined ? debug.dictionaries[locale][key] : key)
+  const expected = {
+    en: { 'role.swarm': 'swarm agent', 'role.fixer': 'fixer', 'role.agent': 'agent' },
+    ru: { 'role.swarm': 'агент роя', 'role.fixer': 'фиксер', 'role.agent': 'агент' },
+    zh: { 'role.swarm': '集群智能体', 'role.fixer': '修复器', 'role.agent': '智能体' },
+  }
+  for (const [locale, keys] of Object.entries(expected)) {
+    for (const [key, value] of Object.entries(keys)) {
+      assert.equal(debug.dictionaries[locale]?.[key], value, locale + ' has ' + key)
+    }
+  }
+  const ruT = t('ru')
+  assert.equal(debug.roleLabel(ruT, 'swarm'), 'агент роя', 'a swarm agent keeps a localized role')
+  assert.equal(debug.roleLabel(ruT, 'fixer'), 'фиксер', 'the repair agent keeps a localized role')
+  assert.equal(debug.roleLabel(ruT, undefined), 'агент', 'the fallback role is localized too')
+  assert.equal(debug.roleLabel(ruT, 'mystery-role'), 'mystery-role', 'an unknown role still stays raw')
 })
 
 test('hero offers the Orchestrator mode and starts an orchestrator run', async () => {

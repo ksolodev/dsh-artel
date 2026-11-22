@@ -48,6 +48,11 @@ All notable changes to this project are documented here. The format follows
   of NUL bytes — as `404 artel/unknown-file`. Both sides are now read as blobs: a side that does not exist stays
   missing (`added`/`deleted`), NUL bytes answer `binary: true`, and the file list takes its statuses from
   `git diff --name-status/--numstat` between the parent and the commit instead of the stored paths with empty hunks.
+- **Agent role labels are localized in every language (#34).** Swarm runs store their agents with the role
+  `swarm`, and the panel looked the label up as `role.swarm` — a key the catalogs never had, so RU and ZH showed
+  the raw `swarm`/`SWARM` and the console warned about the missing key on every render. `role.swarm`,
+  `role.fixer` (the Orchestrator repair agent) and the `role.agent` fallback now exist in all three catalogs;
+  an unknown role still stays raw.
 - **The data root follows the profile the Host runs in.** The Host half reads the profile name from the
   launcher's `profileContext` instead of relying on `DSH_PROFILE` alone, so the desktop app and `dsh web`
   use `<DSH home>/artel/<profile>` as documented. A data root left in `<DSH home>/artel/default` by an

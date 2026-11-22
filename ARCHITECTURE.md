@@ -339,7 +339,7 @@ import field and localizes it by code.
 ## Copy, diff, apply
 
 - **Copy**: git repo → detached worktree at `<copyRoot>/<runId>` (`git worktree add --detach`), recorded base commit; non-git → recursive directory copy excluding `node_modules`, `.git`, and the copy root itself.
-- **Diff**: git copy → `git add -A` (in the copy) then `git diff --cached <baseCommit>`; non-git → compare against the base hash manifest, diff each changed text file with a small internal line diff (LCS). Result: `[{path, status: 'added'|'modified'|'deleted', added, removed, binary}]` + per-file patch text.
+- **Diff**: git copy → `git add -A` (in the copy) then `git diff --cached <baseCommit>`; non-git → compare against the base hash manifest, diff each changed text file with a small internal line diff (LCS). Result: `[{path, status: 'added'|'modified'|'deleted', added, removed, binary}]` + per-file patch text. A committed run (a queue task) takes the same list from `git diff --name-status/--numstat` between its parent commit and its commit, and its per-file diff reads both sides as blobs, so an added, deleted or binary file keeps that status instead of reading as `modified` or `404 artel/unknown-file` (#32).
 - **Apply**: for each changed file, verify the project file still matches `baseHashes` (otherwise `skipped: user edited this file during the run`), then write/delete it. Git repo additionally offers nothing fancier in v1 — copy-back is predictable and works for new/deleted files. Report a per-file result; never partially apply silently. An Orchestrator run with an unfinished merge (`merge.unresolved` non-empty) is refused before any of this with `409 artel/merge-incomplete`.
 - **Cleanup**: `discard`/`apply` removes the worktree (`git worktree remove --force`) or deletes the copy dir; a startup sweep removes copies whose run is terminal and older than `keepCopiesHours`; the project itself is only ever touched by `apply`.
 
@@ -682,7 +682,10 @@ pipeline and `#step` drives the current stage:
 - **restart** — `init` adopts every ticket whose pipeline run is still alive; a ticket whose run died is parked
   or restarted from its stage instead of being forgotten. «Вернуть с комментарием» on a ready ticket whose run
   died in the restart starts one more version from the ticket's last copy and passes the comment to it as the
-  work instruction, so the comment is never refused with `409 factory/comment-failed` (#29).
+  work instruction, so the comment is never refused with `409 factory/comment-failed` (#29). A plan that was
+  waiting at the approval gate is handled the same way: `approvePlan` on the dead run answers `409
+  artel/not-live` before anything is changed, and the Factory starts one more version whose fresh plan waits for
+  approval again (`factory.event.plan-restarted`) instead of leaving the run `running` with no parts (#31).
 - **Panel accessibility** — the ticket card's answer, return-text and comment fields take their placeholder text
   as `aria-label`, the stage pill is a polite `role="status"` region, and both event logs are labelled
   `role="log"` polite live regions (#26).
@@ -707,7 +710,9 @@ pipeline and `#step` drives the current stage:
   only, one fixer at a time; 409 `artel/fixer-busy` / `artel/bad-stage` otherwise).
 - `engine.approvePlan(runId)` — releases a gated Orchestrator run. It is refused unless the run is a
   `planApproval` Orchestrator run with a parsed plan, and idempotent (an already approved run returns its
-  summary); otherwise it sets `planApproved: true` and starts the parts.
+  summary); otherwise it sets `planApproved: true` and starts the parts. A run whose session died in a restart is
+  refused with `409 artel/not-live` before anything is changed, so a plan cannot be marked approved for parts
+  that will never start (#31); the Factory turns that refusal into a new version of the ticket.
 - `checkRepairPrompt()` from `lib/prompts.js` and the check/hygiene helpers in `lib/check.js` are what the
   queue's gate and the Factory's test stage share; `lib/check.js` exports `suggestCheckCommand`, `runCheck`,
   `scanHygiene`, `scanOutward` and `freeDiskBytes`, all injectable and unit-tested without DSH.

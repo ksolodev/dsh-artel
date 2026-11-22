@@ -2793,7 +2793,7 @@ test('all three dictionaries carry the auto-queue and factory strings', () => {
     assert.deepEqual(Object.keys(dictionaries[locale]).filter((key) => !PLURAL.test(key)).sort(), english, locale + ' has every English key')
   }
   const queueAndFactory = english.filter((key) => key.startsWith('queue.') || key.startsWith('factory.'))
-  assert.equal(queueAndFactory.length, 424, 'every queue and factory string is present')
+  assert.equal(queueAndFactory.length, 425, 'every queue and factory string is present')
   const expected = {
     en: {
       'queue.title': 'Waiting',

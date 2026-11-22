@@ -36,6 +36,18 @@ All notable changes to this project are documented here. The format follows
   comment is exactly what should not be lost. The comment is now handed to one more version: the factory starts a
   work run from the ticket's last copy with the comment in its instruction, keeps the ticket in `working` and
   records the run in `versions`; a live run still takes the comment directly, as before.
+- **Approving a plan after a DSH restart no longer leaves a zombie run (#31).** `approvePlan` used to mark the
+  plan approved and flip the run to `running` after a restart, although the parts only exist in the run's memory —
+  nothing started, the card kept «The plan is approved…» and the board held the ticket in `working`, blocking
+  the next ticket. A run without a live session is now refused with `409 artel/not-live` before anything is
+  changed, and the Factory starts one more version from the ticket's last copy (`factory.event.plan-restarted`)
+  whose fresh plan waits for approval again.
+- **A committed run reports added, deleted and binary files like a copy run (#32).** The committed diff read both
+  sides through `git show` and replaced a missing side with an empty string, so a deleted file read as `modified`
+  with `0+`, an added one as `modified` with `0−`, and a binary file — which `git show` answers as `null` because
+  of NUL bytes — as `404 artel/unknown-file`. Both sides are now read as blobs: a side that does not exist stays
+  missing (`added`/`deleted`), NUL bytes answer `binary: true`, and the file list takes its statuses from
+  `git diff --name-status/--numstat` between the parent and the commit instead of the stored paths with empty hunks.
 - **The data root follows the profile the Host runs in.** The Host half reads the profile name from the
   launcher's `profileContext` instead of relying on `DSH_PROFILE` alone, so the desktop app and `dsh web`
   use `<DSH home>/artel/<profile>` as documented. A data root left in `<DSH home>/artel/default` by an

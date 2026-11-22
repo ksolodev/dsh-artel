@@ -814,6 +814,7 @@
     "factory.event.answer-received": "Answer received — work continues.",
     "factory.event.answers-received": "Answers received — the ticket goes back to triage.",
     "factory.event.plan-approved": "The plan is approved — parts are launched.",
+    "factory.event.plan-restarted": "The old plan cannot be approved after a restart — the factory starts a new version.",
     "factory.event.repair-more": "One more repair round {round}.",
     "factory.event.repair-accepted": "Accepted as is: the findings are written to the card.",
     "factory.event.postponed": "Postponed by you.",

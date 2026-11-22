@@ -229,8 +229,9 @@ function makeExec(state) {
       if (line === 'rev-parse --verify HEAD') return { code: state.commitOk ? 0 : 1, stdout: state.commitOk ? 'abc123\n' : '', stderr: '' }
       if (line === 'status --porcelain') return { code: 0, stdout: state.dirty ? ' M src/app.js\n' : '', stderr: '' }
       if (line === 'remote') return { code: 0, stdout: state.remote ? 'origin\n' : '', stderr: '' }
+      if (args[0] === 'checkout' && args[1] === '-b' && state.branchExists) return { code: 1, stdout: '', stderr: 'already exists' }
       if (args[0] === 'checkout' || args[0] === 'add') return { code: 0, stdout: '', stderr: '' }
-      if (args[0] === 'commit') return { code: 0, stdout: '[main abc123] commit\n', stderr: '' }
+      if (args.includes('commit')) return { code: state.failCommit ? 1 : 0, stdout: state.failCommit ? '' : '[main abc123] commit\n', stderr: state.failCommit ? 'fatal: unable to auto-detect email address' : '' }
       if (args[0] === 'push') return { code: state.pushOk ? 0 : 1, stdout: '', stderr: state.pushOk ? '' : 'rejected' }
       return { code: 0, stdout: '', stderr: '' }
     }
@@ -266,7 +267,7 @@ async function fixture(name, options = {}) {
   await fs.writeFile(path.join(projectPath, 'README.md'), '# Demo\n')
   await fs.mkdir(path.join(stateDir, 'tickets'), { recursive: true })
   await fs.mkdir(copyRoot, { recursive: true })
-  const execState = { calls: [], gitOk: true, commitOk: true, dirty: false, remote: true, pushOk: true, prOk: true, issueOk: true, issueError: null }
+  const execState = { calls: [], gitOk: true, commitOk: true, dirty: false, remote: true, pushOk: true, prOk: true, issueOk: true, issueError: null, failCommit: false, branchExists: false }
   const engine = new FakeEngine({ copyRoot })
   const store = new TicketStore({ dir: path.join(stateDir, 'tickets') })
   await store.init()
@@ -967,9 +968,64 @@ test('openPullRequest applies the version, pushes a branch and opens the PR', as
     assert.equal(lines[1], 'git remote')
     assert.equal(lines[2], 'git checkout -b factory/ticket-1')
     assert.equal(lines[3], 'git add -A')
-    assert.equal(lines[4], `git commit -m #1 ${ticket.title}`)
+    assert.equal(lines[4], `git -c user.name=Artel -c user.email=artel@artel.invalid commit -m #1 ${ticket.title}`)
     assert.equal(lines[5], 'git push -u origin factory/ticket-1')
     assert.match(lines[6], /^gh pr create --title #1 /)
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('openPullRequest resumes a retry after the version was already applied (#36)', async () => {
+  const f = await fixture('pull-request-retry')
+  try {
+    const { boardId, ticketId } = await createTicket(f)
+    const runs = await pipelineToReady(f, boardId, ticketId)
+    f.execState.calls.length = 0
+    // The first attempt applies the version and then fails at the commit: this
+    // is exactly the dead end of issue #36.
+    f.execState.failCommit = true
+    await assert.rejects(
+      () => f.runner.openPullRequest(boardId, ticketId),
+      (error) => error instanceof FactoryError && error.status === 409 && error.code === 'factory/git-failed',
+    )
+    assert.equal((await f.ticketOf(boardId, ticketId)).stage, 'ready')
+    assert.equal(f.engine.getRun(runs.work.id).status, 'applied')
+    assert.equal(f.engine.findCall('apply').length, 1)
+
+    // The retry finds the applied changes in the worktree and the branch the
+    // failed attempt created; it commits and pushes instead of applying again.
+    f.execState.failCommit = false
+    f.execState.dirty = true
+    f.execState.branchExists = true
+    f.execState.calls.length = 0
+    const ticket = await f.runner.openPullRequest(boardId, ticketId)
+    assert.equal(ticket.stage, 'done')
+    assert.equal(ticket.branch, 'factory/ticket-1')
+    assert.equal(ticket.pr.url, 'https://github.com/acme/repo/pull/7')
+    assert.equal(ticket.pr.error, null)
+    assert.equal(f.engine.findCall('apply').length, 1, 'the retry must not apply the version a second time')
+    const lines = f.execState.calls.map((call) => `${call.command} ${call.args.join(' ')}`)
+    assert.ok(lines.includes('git checkout factory/ticket-1'), 'the existing branch is reused')
+    assert.ok(lines.includes(`git -c user.name=Artel -c user.email=artel@artel.invalid commit -m #1 ${ticket.title}`))
+    assert.ok(lines.includes('git push -u origin factory/ticket-1'))
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('mergeTicket finishes a ticket whose version is already applied (#36)', async () => {
+  const f = await fixture('merge-applied')
+  try {
+    const { boardId, ticketId } = await createTicket(f)
+    const runs = await pipelineToReady(f, boardId, ticketId)
+    // The earlier attempt applied the version and then its outward step failed.
+    await f.engine.apply(runs.work.id)
+    const ticket = await f.runner.mergeTicket(boardId, ticketId)
+    assert.equal(ticket.stage, 'done')
+    const view = await f.runner.view(boardId)
+    assert.equal(view.board.counters.merged, 1)
+    assert.equal(f.engine.findCall('apply').length, 1, 'merge must not apply an applied version again')
   } finally {
     await f.cleanup()
   }

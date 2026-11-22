@@ -39,6 +39,7 @@ class FakeEngine {
     this.runs = new Map()
     this.feeds = new Map()
     this.changesByRun = new Map()
+    this.stale = new Set()
     this.nextId = 0
     this.defaultChanges = [{ path: 'src/app.js', status: 'modified', added: 1, removed: 1, hunks: [] }]
   }
@@ -122,6 +123,12 @@ class FakeEngine {
    */
   async message(id, message) {
     this.calls.push({ method: 'message', runId: id, text: message?.text ?? '' })
+    if (this.stale.has(id)) {
+      const error = new Error('This run is no longer active')
+      error.code = 'artel/not-live'
+      error.status = 409
+      throw error
+    }
     const run = this.runs.get(id)
     if (run) run.status = 'running'
   }
@@ -858,6 +865,31 @@ test('returnWithComment sends the comment back to the work run', async () => {
     const ticket = await f.runner.returnWithComment(boardId, ticketId, { comment: 'Please fix the header spacing.' })
     assert.equal(ticket.stage, 'working')
     await waitFor(() => f.engine.findCall('message').find((call) => call.runId === runs.work.id && /Please fix the header spacing/.test(call.text)))
+  } finally {
+    await f.cleanup()
+  }
+})
+
+test('returnWithComment starts a fresh version when the old run is no longer live (#29)', async () => {
+  const f = await fixture('comment-restart')
+  try {
+    const { boardId, ticketId } = await createTicket(f)
+    const runs = await pipelineToReady(f, boardId, ticketId)
+    // A DSH restart leaves the stored run behind but not its live runtime.
+    f.engine.stale.add(runs.work.id)
+    const starts = f.engine.findCall('start').length
+
+    const ticket = await f.runner.returnWithComment(boardId, ticketId, { comment: 'Please fix the header spacing.' })
+
+    assert.equal(ticket.stage, 'working')
+    assert.notEqual(ticket.runId, runs.work.id, 'a new version is started')
+    const started = f.engine.findCall('start')
+    assert.equal(started.length, starts + 1, 'exactly one new work run is started')
+    const restart = started[started.length - 1].request
+    assert.equal(restart.basePath, runs.work.copyPath, 'the new version grows from the last copy')
+    assert.match(restart.task, /Please fix the header spacing/)
+    const updated = await f.ticketOf(boardId, ticketId)
+    assert.ok(updated.versions.some((version) => version.runId === ticket.runId), 'the new run is recorded as a version')
   } finally {
     await f.cleanup()
   }

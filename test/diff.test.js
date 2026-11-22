@@ -92,6 +92,11 @@ test('binary files are flagged without line diff', () => {
   assert.equal(result.hunks.length, 0)
 })
 
+test('looksBinary tolerates a missing side', () => {
+  assert.equal(looksBinary(null), false)
+  assert.equal(looksBinary(undefined), false)
+})
+
 test('unified patch rendering', () => {
   const result = diffFile({ path: 'src/x.ts', before: 'a\nb\n', after: 'a\nc\n' })
   const patch = toUnifiedPatch('src/x.ts', result.hunks)

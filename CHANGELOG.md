@@ -27,6 +27,15 @@ All notable changes to this project are documented here. The format follows
 - **The Factory panel speaks to assistive technology (#26).** The ticket card's answer, return-text and comment
   fields take their existing placeholder text as `aria-label`, the stage pill is a polite `role="status"` region,
   and both event logs are labelled `role="log"` polite regions, matching the new-ticket composer.
+- **A diff of a file the run never touched answers 404 instead of 500 (#28).** The per-file diff route read both
+  sides with a silent `null`, and a path present in neither side reached the binary probe as `null`, so `slice`
+  threw and the route answered `500 artel/internal` with the TypeError text. A path that exists in neither the
+  before nor the after side is now `404 artel/unknown-file`, and the binary probe tolerates a missing side.
+- **«Return with a comment» survives a DSH restart (#29).** After a restart the stored run has no live session, so
+  the review comment could not be sent to it and the card answered `409 factory/comment-failed` — although the
+  comment is exactly what should not be lost. The comment is now handed to one more version: the factory starts a
+  work run from the ticket's last copy with the comment in its instruction, keeps the ticket in `working` and
+  records the run in `versions`; a live run still takes the comment directly, as before.
 - **The data root follows the profile the Host runs in.** The Host half reads the profile name from the
   launcher's `profileContext` instead of relying on `DSH_PROFILE` alone, so the desktop app and `dsh web`
   use `<DSH home>/artel/<profile>` as documented. A data root left in `<DSH home>/artel/default` by an

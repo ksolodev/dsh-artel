@@ -268,7 +268,7 @@ All routes under `/api/dsh-artel/**`, JSON, same-origin + the connection's trust
 | POST | `/api/dsh-artel/runs/:id/messages` | `{ text, agentId? }` | `{ ok }` |
 | POST | `/api/dsh-artel/runs/:id/interrupt` | — | `{ ok }` |
 | GET | `/api/dsh-artel/runs/:id/changes` | — | `{ files: FileChange[] }` |
-| GET | `/api/dsh-artel/runs/:id/diff` | `path` | `{ patch }` |
+| GET | `/api/dsh-artel/runs/:id/diff` | `path` | `{ file }` — a path present in neither side is `404 artel/unknown-file` |
 | POST | `/api/dsh-artel/runs/:id/apply` | `{ paths? }` | `{ ...result, run }` |
 | POST | `/api/dsh-artel/runs/:id/discard` | — | `{ ok, run }` |
 | GET | `/api/dsh-artel/runs/:id/install` | `refresh?` | `{ install, run }` — the detected install record (`refresh=1` re-reads the project) |
@@ -680,7 +680,9 @@ pipeline and `#step` drives the current stage:
   resolved by `gh` in the project folder and its repository is recovered from the returned issue URL, so the
   external id stays `gh:<repo>#<n>` and a short reference deduplicates against the full one (#25).
 - **restart** — `init` adopts every ticket whose pipeline run is still alive; a ticket whose run died is parked
-  or restarted from its stage instead of being forgotten.
+  or restarted from its stage instead of being forgotten. «Вернуть с комментарием» on a ready ticket whose run
+  died in the restart starts one more version from the ticket's last copy and passes the comment to it as the
+  work instruction, so the comment is never refused with `409 factory/comment-failed` (#29).
 - **Panel accessibility** — the ticket card's answer, return-text and comment fields take their placeholder text
   as `aria-label`, the stage pill is a polite `role="status"` region, and both event logs are labelled
   `role="log"` polite live regions (#26).

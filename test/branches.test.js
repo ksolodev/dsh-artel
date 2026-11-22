@@ -304,11 +304,10 @@ test('apply() refuses a failing check unless the user forces it', async () => {
   try {
     const { branch } = await fx.service.createBranch('s1', { name: 'Check' })
     await commitOnBranch(fx, branch, { file: 'src/app.js', content: 'export const answer = 2\n', subject: 'Branch' })
-    // Deviation from the plan: `node -e "process.exit(1)"` is mangled by Node's
-    // Windows argument quoting when spawned as cmd.exe /d /s /c <command> (the
-    // planned runCheckCommand shape), so cmd exits 0. Without inner quotes the
-    // same command exits non-zero through that shape on Windows and Unix alike.
-    const checkCommand = 'node -e process.exit(1)'
+    // The quotes must reach the shell intact: a hand-built `cmd.exe /d /s /c`
+    // argv used to re-quote this command, so a failing check was read as a
+    // success and the branch was applied anyway (#24).
+    const checkCommand = 'node -e "process.exit(1)"'
 
     await assert.rejects(fx.service.apply('s1', { branchId: branch.id, checkCommand }), (error) => {
       assert.equal(error.code, 'artel/check-failed')
@@ -318,6 +317,22 @@ test('apply() refuses a failing check unless the user forces it', async () => {
 
     const forced = await fx.service.apply('s1', { branchId: branch.id, checkCommand, force: true })
     assert.equal(forced.check.ok, false)
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 2\n')
+  } finally {
+    await fx.cleanup()
+  }
+})
+
+test('apply() runs a passing check command that contains quotes (#24)', async () => {
+  const fx = await fixture()
+  try {
+    const { branch } = await fx.service.createBranch('s1', { name: 'Check ok' })
+    await commitOnBranch(fx, branch, { file: 'src/app.js', content: 'export const answer = 2\n', subject: 'Branch' })
+    const checkCommand = 'node -e "console.log(String(6 * 7))"'
+
+    const result = await fx.service.apply('s1', { branchId: branch.id, checkCommand })
+    assert.equal(result.check.ok, true)
+    assert.match(result.check.output, /42/)
     assert.equal(await fs.readFile(path.join(fx.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 2\n')
   } finally {
     await fx.cleanup()

@@ -582,10 +582,17 @@ test('importGithubIssue turns one issue into a ticket exactly once', async () =>
     assert.equal(ticket.title, 'Fix the login')
     assert.equal(ticket.source.kind, 'github')
     assert.equal(ticket.source.url, 'https://github.com/acme/repo/issues/12')
+    assert.equal(ticket.source.externalId, 'gh:acme/repo#12')
     const call = f.execState.calls.find((entry) => entry.command === 'gh' && entry.args[0] === 'issue')
     assert.ok(call.args.includes('-R'), 'an owner/repo reference is pinned with -R')
     assert.equal(call.args[call.args.indexOf('-R') + 1], 'acme/repo')
 
+    // A short `#12` resolves to the same repository through the issue URL, so
+    // the second import is refused instead of opening a duplicate (#25).
+    await assert.rejects(
+      () => f.runner.importGithubIssue(boardId, '#12'),
+      (error) => error instanceof FactoryError && error.status === 409 && error.code === 'factory/duplicate-ticket',
+    )
     await assert.rejects(
       () => f.runner.importGithubIssue(boardId, 'acme/repo#12'),
       (error) => error instanceof FactoryError && error.status === 409 && error.code === 'factory/duplicate-ticket',

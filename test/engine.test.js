@@ -1429,6 +1429,36 @@ test('a fusion run fails when every panelist stops', async () => {
   }
 })
 
+test('a fusion failure carries the provider message from every stopped panelist', async () => {
+  const f = await fixture('fusion-panel-detail')
+  try {
+    const run = await startFusion(f)
+    const reasons = [
+      { kind: 'error', error: { message: '403 Forbidden', code: 'provider/forbidden' } },
+      { kind: 'error', error: { message: 'model not found', code: 'provider/not-found' } },
+      { kind: 'error', error: { message: '403 Forbidden', code: 'provider/forbidden' } },
+    ]
+    const handles = f.driver.created.slice(0, 3)
+    for (const [index, handle] of handles.entries()) {
+      await f.driver.emit(handle, { kind: 'turn-start' })
+      await f.driver.emit(handle, { kind: 'turn-end', reason: reasons[index] })
+    }
+
+    const feed = await feedOf(f, run.id)
+    assert.ok(feed.some((event) => event.kind === 'error' && event.text.includes('Provider: 403 Forbidden [provider/forbidden]')), 'the feed repeats the provider text')
+    const failed = latestRun(f)
+    assert.equal(failed.status, 'failed')
+    const error = f.store.get(run.id).error
+    assert.match(error, /Failed models/)
+    assert.match(error, /Vega \(test\/fast\): 403 Forbidden \[provider\/forbidden\]/)
+    assert.match(error, /Orion \(test\/slow\): model not found \[provider\/not-found\]/)
+    assert.match(error, /Lyra \(test\/fast\): 403 Forbidden \[provider\/forbidden\]/)
+  } finally {
+    await f.engine.dispose()
+    await f.cleanup()
+  }
+})
+
 test('an empty judge answer is asked once more, then the run continues', async () => {
   const f = await fixture('fusion-judge')
   try {

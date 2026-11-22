@@ -2157,16 +2157,17 @@ test('hero shows the five Fusion routes and starts a fusion run', async () => {
     ['Панель 1', 'Панель 2', 'Панель 3', 'Судья', 'Исполнитель'],
   )
 
-  // The panel is pre-seeded with distinct catalog rows, judge and implementer with the default.
+  // The panel starts inside the default provider: its only other route first,
+  // then the default route repeated; judge and implementer use the default.
   const values = () => fusionChips().map((chip) => pickerTriggers(chip)[0].props['data-value'])
-  assert.deepEqual(values(), ['test/slow', 'test/slow', 'test/fast', 'test/fast', 'test/fast'])
+  assert.deepEqual(values(), ['test/slow', 'test/fast', 'test/fast', 'test/fast', 'test/fast'])
 
   // Picking another model for the first panel slot leaves the other four slots intact.
   pickerTriggers(fusionChips()[0])[0].props.onClick()
   await state.realm.renderer.flush()
   pickOption(state.realm.renderer.tree(), 'test/fast')
   await state.realm.renderer.flush()
-  assert.deepEqual(values(), ['test/fast', 'test/slow', 'test/fast', 'test/fast', 'test/fast'])
+  assert.deepEqual(values(), ['test/fast', 'test/fast', 'test/fast', 'test/fast', 'test/fast'])
 
   const textarea = findAll(heroNow(), (node) => node.type === 'textarea' && node.props.className === 'dsh-artel-hero__textarea')[0]
   textarea.props.onChange({ target: { value: 'Выберите лучший подход к задаче' } })
@@ -2183,7 +2184,7 @@ test('hero shows the five Fusion routes and starts a fusion run', async () => {
   assert.deepEqual(post.body.models, {
     panel: [
       { provider: 'test', model: 'fast', reasoningEffort: 'low' },
-      { provider: 'test', model: 'slow' },
+      { provider: 'test', model: 'fast', reasoningEffort: 'low' },
       { provider: 'test', model: 'fast', reasoningEffort: 'low' },
     ],
     judge: { provider: 'test', model: 'fast', reasoningEffort: 'low' },
@@ -2194,7 +2195,7 @@ test('hero shows the five Fusion routes and starts a fusion run', async () => {
   state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
 })
 
-test('the Fusion form seeds the panel from the default provider catalogue', async () => {
+test('the Fusion form seeds the panel from the default provider only', async () => {
   const models = {
     providers: [
       {
@@ -2236,20 +2237,59 @@ test('the Fusion form seeds the panel from the default provider catalogue', asyn
   assert.deepEqual(values(), [
     'opencode-go/deepseek-v4-pro',
     'opencode-go/claude-haiku-5-5',
-    'deepseek-account/deepseek-flash',
     'opencode-go/deepseek-v4.1-flash',
     'opencode-go/deepseek-v4.1-flash',
-  ], 'the panel prefers the default provider, skips the default route and dedupes model ids')
+    'opencode-go/deepseek-v4.1-flash',
+  ], 'the panel stays inside the default provider and repeats the default route when it runs out')
   assert.deepEqual(labels(), [
     'DeepSeek V4 Pro (New)',
     'Claude Haiku 5.5',
-    'DeepSeek-V4.1-Flash',
+    'DeepSeek V4.1 Flash',
     'DeepSeek V4.1 Flash',
     'DeepSeek V4.1 Flash',
   ], 'the chips show the names the providers declare')
-  const panelModels = values().slice(0, 3).map((value) => value.slice(value.indexOf('/') + 1))
-  assert.equal(new Set(panelModels).size, 3, 'one model id appears in the panel only once')
-  assert.equal(panelModels.includes('deepseek-v4.1-flash'), false, 'the judge keeps the default route')
+  assert.deepEqual(
+    [...new Set(values().map((value) => value.slice(0, value.indexOf('/'))))],
+    ['opencode-go'],
+    'the panel never borrows a provider that was not selected by the user',
+  )
+
+  state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
+})
+
+test('the Fusion panel repeats the default route instead of borrowing another provider', async () => {
+  const models = {
+    providers: [
+      { id: 'dead', name: 'Dead provider', models: [{ id: 'alpha', name: 'Alpha', efforts: [] }] },
+      {
+        id: 'working',
+        name: 'Working provider',
+        models: [
+          { id: 'one', name: 'One', efforts: [] },
+          { id: 'two', name: 'Two', efforts: [] },
+          { id: 'three', name: 'Three', efforts: [] },
+        ],
+      },
+    ],
+    default: { provider: 'dead', model: 'alpha' },
+  }
+  const state = setup({ scenario: { project: DEFAULT_PROJECT, runs: [], models } })
+  const tree = await renderLauncher(state)
+  findByClass(tree, 'dsh-artel-launcher').props.onClick()
+  await state.realm.settle()
+  await state.realm.settle()
+  await state.realm.renderer.flush()
+
+  const heroNow = () => findByClass(state.realm.renderer.tree(), 'dsh-artel-hero')
+  const radios = () => findAll(findByClass(heroNow(), 'dsh-artel-segmented'), (node) => node.type === 'button' && node.props.role === 'radio')
+  radios()[3].props.onClick()
+  await state.realm.renderer.flush()
+  const chips = () => findAll(findByClass(heroNow(), 'dsh-artel-hero__fusion'), (node) => typeof node.props.className === 'string' && node.props.className.split(/\s+/).includes('dsh-artel-hero__fusion-pick'))
+  assert.deepEqual(
+    chips().map((chip) => pickerTriggers(chip)[0].props['data-value']),
+    ['dead/alpha', 'dead/alpha', 'dead/alpha', 'dead/alpha', 'dead/alpha'],
+    'with no sibling route the panel stays on the default instead of seeding untrusted providers',
+  )
 
   state.realm.window.__DSH_ARTEL_DEBUG__.getStore('sess-1').dispose()
 })

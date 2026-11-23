@@ -152,9 +152,9 @@
 <rect x="448" y="436" width="1" height="20" fill="#232a45"/>
 <text x="494" y="450.5" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12.5" letter-spacing="0.1" text-anchor="middle" fill="#c7d2fe">Orchestrator</text>
 <text x="80" y="508" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" letter-spacing="2.0" fill="#8b96b4">INSTALL</text>
-<rect x="80" y="520" width="220" height="32" rx="8" fill="#0b1120" stroke="#212a45"/>
+<rect x="80" y="520" width="460" height="32" rx="8" fill="#0b1120" stroke="#212a45"/>
 <text x="96" y="541" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="12.5" fill="#8b7cff">$</text>
-<text x="112" y="541" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="12.5" fill="#c9d1e6">dsh plugin add dsh-artel</text>
+<text x="112" y="541" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="12.5" fill="#c9d1e6">dsh plugin --profile &lt;profile&gt; add dsh-artel</text>
 <text x="80" y="588" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12" fill="#8a94b3">github.com/ksolodev/dsh-artel</text>
 <rect x="261" y="577" width="1" height="14" fill="#242d47"/>
 <text x="278" y="588" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12" fill="#636e8d">dsh-artel · DeepSeek Harness plugin</text>

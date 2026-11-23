@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-11-23
+
+This release is the result of a complete sweep of the product: every route, mode and panel flow was
+exercised against a live Host, the defects the sweep found were fixed one at a time, and each fix shipped
+with tests and a live re-check. Quoted check commands now reach the shell, short issue references
+deduplicate, the Factory panel is usable with assistive technology, plan approval and «return with a
+comment» survive a DSH restart, committed runs report added/deleted/binary files, agent roles are
+localized, a failed Pull Request resumes instead of dead-ending, the panel keeps its palette in a light
+Host theme, parallel branch applies answer a conflict instead of corrupting the project, and a long first
+line no longer refuses a queue task. This is the build recommended for everyday use.
+
 ### Fixed
 
 - **Re-applying a branch after its revert lands the changes again (#22).** The apply used to merge the
@@ -74,6 +85,17 @@ All notable changes to this project are documented here. The format follows
   операции.»), matching the branch-busy conflicts around it. Applies and merges of the same branch that start
   in the same millisecond also get their own worktree directory now: the two git worktrees used to collide
   on one path and answered `500 artel/git-failed` before the ref race could even be decided.
+- **A rejected apply leaves the project untouched (#41).** The apply wrote the branch files into the project
+  before it moved `refs/heads/applied`; when the compare-and-swap lost a race the route answered
+  `409 artel/git-ref-changed`, but the files were already written — the project showed drift, `revert`
+  refused with `artel/nothing-to-revert` and every later apply needed `confirmDrift`. The applied ref is now
+  moved first and the write-back happens only after the swap succeeded, for `apply` and `revert` alike, so a
+  rejected call changes neither the project nor the queue.
+- **A long first line no longer refuses a branch-queue task (#42).** The queue turns a task's first line
+  into the branch name when no branch is requested, but a title may be up to 120 characters while a branch
+  name may be 80, so an 81–120-character first line refused the whole add with `400 The branch name is
+  longer than 80 characters`. The automatic name is now trimmed to the limit with trailing whitespace
+  removed; an explicit longer branch name is still refused.
 - **The data root follows the profile the Host runs in.** The Host half reads the profile name from the
   launcher's `profileContext` instead of relying on `DSH_PROFILE` alone, so the desktop app and `dsh web`
   use `<DSH home>/artel/<profile>` as documented. A data root left in `<DSH home>/artel/default` by an

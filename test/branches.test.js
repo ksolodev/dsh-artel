@@ -47,16 +47,16 @@ async function fixture({ assist = null } = {}) {
   return { root, stateDir, projectPath, store, service, engine, cleanup: () => fs.rm(root, { recursive: true, force: true }) }
 }
 
-async function commitOnBranch(fx, branch, { file, content, subject, parent = null }) {
-  const git = await fx.service.ensure('s1')
+async function commitOnBranch(fx, branch, { file, content, subject, parent = null, session = 's1' }) {
+  const git = await fx.service.ensure(session)
   const base = parent ?? branch.tipCommit ?? branch.baseCommit
   const work = path.join(fx.root, `work-${Math.random().toString(36).slice(2, 8)}`)
   await git.materialize(work, base)
   await fs.writeFile(path.join(work, file), content)
   const commit = await git.commitDir(work, { parent: base, message: subject })
   await git.updateRef(branch.ref, commit, base)
-  const queue = await fx.store.get('s1')
-  await fx.store.patch('s1', {
+  const queue = await fx.store.get(session)
+  await fx.store.patch(session, {
     branches: queue.branches.map((entry) => (entry.id === branch.id ? { ...entry, tipCommit: commit } : entry)),
   })
   return commit
@@ -685,6 +685,67 @@ test('merge() refuses a source that adds nothing new instead of moving the targe
     const git = await fx.service.ensure('s1')
     assert.equal(await git.ref(main.ref), first.mergeCommit, 'the target ref did not move')
     assert.equal((await fx.store.get('s1')).branches.find((entry) => entry.id === main.id).tipCommit, first.mergeCommit)
+  } finally {
+    await fx.cleanup()
+  }
+})
+
+test('a rejected apply does not write the branch files into the project (#41)', async () => {
+  const fx = await fixture()
+  try {
+    // A second chat opens the same project and records the same imported head.
+    const initial = await fx.store.get('s1')
+    await fx.store.replace('s2', { ...initial, sessionId: 's2' })
+
+    const { branch: winner } = await fx.service.createBranch('s1', { name: 'Winner' })
+    await commitOnBranch(fx, winner, { file: 'src/app.js', content: 'export const answer = 2\n', subject: 'Winner answer' })
+    const first = await fx.service.apply('s1', { branchId: winner.id })
+
+    const { branch: loser } = await fx.service.createBranch('s2', { name: 'Loser' })
+    await commitOnBranch(fx, loser, { file: 'o2-side.txt', content: 'side\n', subject: 'Loser side', session: 's2' })
+
+    await assert.rejects(fx.service.apply('s2', { branchId: loser.id }), (error) => {
+      assert.equal(error.status, 409)
+      assert.equal(error.code, 'artel/git-ref-changed')
+      return true
+    })
+
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 2\n', 'the winner files stay')
+    await assert.rejects(fs.access(path.join(fx.projectPath, 'o2-side.txt')), { code: 'ENOENT' }, 'the rejected branch wrote no file')
+    assert.equal((await fx.service.projectState('s1')).drift.dirty, false, 'the rejected apply left no drift')
+    const reverted = await fx.service.revertApply('s1')
+    assert.equal(reverted.reverted.undone, first.applied.commit, 'the revert stays available')
+  } finally {
+    await fx.cleanup()
+  }
+})
+
+test('a rejected revert does not write files into the project either (#41)', async () => {
+  const fx = await fixture()
+  try {
+    const { branch } = await fx.service.createBranch('s1', { name: 'Answer' })
+    await commitOnBranch(fx, branch, { file: 'src/app.js', content: 'export const answer = 2\n', subject: 'Answer 2' })
+    await fx.service.apply('s1', { branchId: branch.id })
+
+    // Another chat moves refs/heads/applied and the work tree with it; the queue
+    // of this session still points at the applied commit it recorded.
+    const git = await fx.service.ensure('s1')
+    const queue = await fx.store.get('s1')
+    const work = path.join(fx.root, 'other-chat')
+    await git.materialize(work, queue.project.head)
+    await fs.writeFile(path.join(work, 'src', 'app.js'), 'export const answer = 3\n')
+    const moved = await git.commitDir(work, { parent: queue.project.head, message: 'Other chat answer' })
+    await git.updateRef('refs/heads/applied', moved, queue.project.head)
+    await fs.writeFile(path.join(fx.projectPath, 'src', 'app.js'), 'export const answer = 3\n')
+
+    await assert.rejects(fx.service.revertApply('s1'), (error) => {
+      assert.equal(error.status, 409)
+      assert.equal(error.code, 'artel/git-ref-changed')
+      return true
+    })
+
+    assert.equal(await fs.readFile(path.join(fx.projectPath, 'src', 'app.js'), 'utf8'), 'export const answer = 3\n', 'the rejected revert wrote no file')
+    assert.equal((await fx.service.projectState('s1')).drift.dirty, false, 'the rejected revert left no drift')
   } finally {
     await fx.cleanup()
   }

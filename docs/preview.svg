@@ -1,102 +1,282 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="previewTitle previewDesc" font-family="Segoe UI, system-ui, -apple-system, sans-serif">
-  <title id="previewTitle">dsh-artel</title>
-  <desc id="previewDesc">Coding agents in an isolated copy of your project. Review the diff, apply it yourself.</desc>
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0b1020"/>
-      <stop offset="0.55" stop-color="#0d1328"/>
-      <stop offset="1" stop-color="#141b38"/>
-    </linearGradient>
-    <radialGradient id="glowA" cx="0.16" cy="0.12" r="0.7">
-      <stop offset="0" stop-color="#6366f1" stop-opacity="0.38"/>
-      <stop offset="1" stop-color="#6366f1" stop-opacity="0"/>
-    </radialGradient>
-    <radialGradient id="glowB" cx="0.92" cy="0.92" r="0.62">
-      <stop offset="0" stop-color="#22d3ee" stop-opacity="0.16"/>
-      <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="iconInk" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#a5b4fc"/>
-      <stop offset="1" stop-color="#22d3ee"/>
-    </linearGradient>
-    <linearGradient id="chip" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1e293b"/>
-      <stop offset="1" stop-color="#172033"/>
-    </linearGradient>
-  </defs>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" role="img" aria-labelledby="ttl dsc">
+<title id="ttl">Artel — coding agents in an isolated copy of your project</title>
+<desc id="dsc">Artel is a DeepSeek Harness plugin. A live Swarm run card and a per-file diff card float over a dark violet workspace; on the left, the Artel wordmark, the line "Coding agents in an isolated copy of your project.", five run modes and the install command.</desc>
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#05070d"/>
+    <stop offset="0.38" stop-color="#080b16"/>
+    <stop offset="0.72" stop-color="#0a0f1e"/>
+    <stop offset="1" stop-color="#0d1327"/>
+  </linearGradient>
+  <radialGradient id="glowV" gradientUnits="userSpaceOnUse" cx="900" cy="320" r="600">
+    <stop offset="0" stop-color="#6f66ff" stop-opacity="0.30"/>
+    <stop offset="0.42" stop-color="#6366f1" stop-opacity="0.11"/>
+    <stop offset="1" stop-color="#6366f1" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="glowV2" gradientUnits="userSpaceOnUse" cx="1010" cy="455" r="400">
+    <stop offset="0" stop-color="#7c6cff" stop-opacity="0.20"/>
+    <stop offset="1" stop-color="#7c6cff" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="glowC" gradientUnits="userSpaceOnUse" cx="1225" cy="580" r="350">
+    <stop offset="0" stop-color="#22d3ee" stop-opacity="0.15"/>
+    <stop offset="1" stop-color="#22d3ee" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="glowT" gradientUnits="userSpaceOnUse" cx="1120" cy="-60" r="470">
+    <stop offset="0" stop-color="#a5b4fc" stop-opacity="0.10"/>
+    <stop offset="1" stop-color="#a5b4fc" stop-opacity="0"/>
+  </radialGradient>
+  <radialGradient id="glowL" gradientUnits="userSpaceOnUse" cx="205" cy="150" r="360">
+    <stop offset="0" stop-color="#6d6bff" stop-opacity="0.10"/>
+    <stop offset="1" stop-color="#6d6bff" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="sepG" gradientUnits="userSpaceOnUse" x1="0" y1="70" x2="0" y2="570">
+    <stop offset="0" stop-color="#2e3a63" stop-opacity="0"/>
+    <stop offset="0.18" stop-color="#2e3a63" stop-opacity="0.55"/>
+    <stop offset="0.82" stop-color="#2e3a63" stop-opacity="0.55"/>
+    <stop offset="1" stop-color="#2e3a63" stop-opacity="0"/>
+  </linearGradient>
+  <radialGradient id="vig" gradientUnits="userSpaceOnUse" cx="640" cy="300" r="780">
+    <stop offset="0.35" stop-color="#020409" stop-opacity="0"/>
+    <stop offset="0.78" stop-color="#020409" stop-opacity="0.35"/>
+    <stop offset="1" stop-color="#020409" stop-opacity="0.66"/>
+  </radialGradient>
+  <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+    <path d="M48 0H0V48" fill="none" stroke="#8b96c9" stroke-width="1"/>
+  </pattern>
+  <radialGradient id="gridFade" gradientUnits="userSpaceOnUse" cx="915" cy="320" r="540">
+    <stop offset="0" stop-color="#ffffff" stop-opacity="0.9"/>
+    <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.42"/>
+    <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+  </radialGradient>
+  <mask id="gridMask"><rect width="1280" height="640" fill="url(#gridFade)"/></mask>
 
-  <rect width="1280" height="640" fill="url(#bg)"/>
-  <rect width="1280" height="640" fill="url(#glowA)"/>
-  <rect width="1280" height="640" fill="url(#glowB)"/>
+  <linearGradient id="markGrad" gradientUnits="userSpaceOnUse" x1="2" y1="3" x2="21" y2="22">
+    <stop offset="0" stop-color="#dbe3ff"/>
+    <stop offset="0.42" stop-color="#a5b4fc"/>
+    <stop offset="0.78" stop-color="#7c6cff"/>
+    <stop offset="1" stop-color="#22d3ee"/>
+  </linearGradient>
 
-  <!-- icon -->
-  <g transform="translate(88 84) scale(4.4)" fill="none" stroke="url(#iconInk)" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="2.75" y="7.25" width="12.5" height="13.5" rx="2.4" opacity="0.5"/>
-    <path d="M6.75 4.25 h9.5 a2.5 2.5 0 0 1 2.5 2.5 v9.5"/>
-    <path d="M6.25 13.5 l2.6 2.6 L14 10.8"/>
-  </g>
-
-  <!-- title block -->
-  <text x="88" y="330" font-size="94" font-weight="700" letter-spacing="-2" fill="#f8fafc">Artel</text>
-  <text x="90" y="392" font-size="31" fill="#c7d2fe">Review the diff. Apply it yourself.</text>
-  <text x="90" y="440" font-size="20" fill="#8b99b8">Coding agents in an isolated copy of your project</text>
-
-  <!-- chips -->
-  <g font-size="17" fill="#cbd5e1" text-anchor="middle">
-    <rect x="88" y="478" width="82" height="40" rx="20" fill="url(#chip)" stroke="#2b3a5c"/>
-    <text x="129" y="504">Solo</text>
-    <rect x="182" y="478" width="98" height="40" rx="20" fill="url(#chip)" stroke="#2b3a5c"/>
-    <text x="231" y="504">Swarm</text>
-    <rect x="292" y="478" width="152" height="40" rx="20" fill="url(#chip)" stroke="#2b3a5c"/>
-    <text x="368" y="504">Per-file diff</text>
-    <rect x="456" y="478" width="150" height="40" rx="20" fill="url(#chip)" stroke="#2b3a5c"/>
-    <text x="531" y="504">Manual Apply</text>
-  </g>
-
-  <!-- mock run panel -->
-  <g>
-    <rect x="724" y="104" width="468" height="432" rx="18" fill="#0e1526" stroke="#26324f"/>
-    <rect x="724" y="104" width="468" height="52" rx="18" fill="#111a2e"/>
-    <rect x="724" y="138" width="468" height="18" fill="#111a2e"/>
-    <circle cx="756" cy="130" r="6" fill="#f87171" opacity="0.85"/>
-    <circle cx="776" cy="130" r="6" fill="#fbbf24" opacity="0.85"/>
-    <circle cx="796" cy="130" r="6" fill="#34d399" opacity="0.85"/>
-    <text x="826" y="136" font-size="15" fill="#94a3b8">Artel · run · Swarm</text>
-    <circle cx="1152" cy="130" r="5" fill="#34d399"/>
-    <text x="1138" y="136" font-size="14" fill="#64748b" text-anchor="end">live</text>
-  </g>
-
-  <!-- feed -->
-  <g font-size="15">
-    <text x="752" y="192" fill="#93c5fd">Vega</text>
-    <text x="806" y="192" fill="#94a3b8">planning · src/app/settings/**</text>
-    <text x="752" y="222" fill="#67e8f9">Orion</text>
-    <text x="812" y="222" fill="#94a3b8">OWNERSHIP: src/screens/**</text>
-    <text x="752" y="252" fill="#fca5a5">Lyra</text>
-    <text x="800" y="252" fill="#94a3b8">editing tests/settings.test.ts</text>
-    <circle cx="746" cy="252" r="3" fill="#fca5a5"/>
-  </g>
-
-  <!-- diff card -->
-  <g>
-    <rect x="748" y="282" width="420" height="226" rx="12" fill="#0b1220" stroke="#1f2a44"/>
-    <text x="770" y="312" font-size="14" fill="#e2e8f0" font-family="Cascadia Code, Consolas, monospace">src/app/settings.tsx</text>
-    <text x="1146" y="312" font-size="13" fill="#4ade80" text-anchor="end">+12 −4</text>
-    <line x1="748" y1="330" x2="1168" y2="330" stroke="#1f2a44"/>
-    <g font-family="Cascadia Code, Consolas, monospace" font-size="13.5">
-      <rect x="748" y="338" width="420" height="24" fill="#3f1d24" opacity="0.55"/>
-      <text x="770" y="355" fill="#fca5a5">-  const theme = 'light'</text>
-      <rect x="748" y="362" width="420" height="24" fill="#12301f" opacity="0.6"/>
-      <text x="770" y="379" fill="#86efac">+  const theme = await loadTheme()</text>
-      <text x="770" y="403" fill="#64748b">   return (</text>
-      <text x="770" y="427" fill="#64748b">     &lt;Settings</text>
-      <rect x="748" y="434" width="420" height="24" fill="#12301f" opacity="0.6"/>
-      <text x="770" y="451" fill="#86efac">+      theme={theme}</text>
-      <text x="770" y="475" fill="#64748b">       onChange={onChange}</text>
-    </g>
-  </g>
-
-  <!-- footer -->
-  <text x="1192" y="600" font-size="15" fill="#64748b" text-anchor="end">dsh-artel · DeepSeek Harness plugin</text>
-  <text x="88" y="600" font-size="15" fill="#64748b">github.com/ksolodev/dsh-artel</text>
+  <linearGradient id="lit" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#ffffff" stop-opacity="0.075"/>
+    <stop offset="0.3" stop-color="#ffffff" stop-opacity="0.016"/>
+    <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+  </linearGradient>
+  <linearGradient id="queueFill" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#141c33"/><stop offset="1" stop-color="#0a0f1d"/>
+  </linearGradient>
+  <linearGradient id="mainFill" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#1a2440"/><stop offset="1" stop-color="#0c1223"/>
+  </linearGradient>
+  <linearGradient id="diffFill" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#151d33"/><stop offset="1" stop-color="#080c17"/>
+  </linearGradient>
+  <linearGradient id="edgeG" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#b9c1ff" stop-opacity="0.55"/>
+    <stop offset="0.28" stop-color="#6f66ff" stop-opacity="0.22"/>
+    <stop offset="0.55" stop-color="#2a3352" stop-opacity="0.75"/>
+    <stop offset="1" stop-color="#1d2540" stop-opacity="0.85"/>
+  </linearGradient>
+  <linearGradient id="edgeG2" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#cdd3ff" stop-opacity="0.7"/>
+    <stop offset="0.3" stop-color="#7c6cff" stop-opacity="0.3"/>
+    <stop offset="0.6" stop-color="#2e3a5e" stop-opacity="0.85"/>
+    <stop offset="1" stop-color="#202a49" stop-opacity="0.9"/>
+  </linearGradient>
+  <linearGradient id="rimH" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#c7d2fe" stop-opacity="0.75"/>
+    <stop offset="0.45" stop-color="#7c6cff" stop-opacity="0.42"/>
+    <stop offset="0.82" stop-color="#22d3ee" stop-opacity="0.16"/>
+    <stop offset="1" stop-color="#22d3ee" stop-opacity="0.03"/>
+  </linearGradient>
+  <linearGradient id="btnFill" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#8b7cff"/><stop offset="1" stop-color="#6366f1"/>
+  </linearGradient>
+  <radialGradient id="avV"><stop offset="0" stop-color="#9d8cff"/><stop offset="1" stop-color="#6157d8"/></radialGradient>
+  <radialGradient id="avC"><stop offset="0" stop-color="#4de3f7"/><stop offset="1" stop-color="#0b7f97"/></radialGradient>
+  <radialGradient id="avL"><stop offset="0" stop-color="#d6dcff"/><stop offset="1" stop-color="#7b83e8"/></radialGradient>
+  <linearGradient id="palG" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#34d399"/><stop offset="1" stop-color="#1f8f68"/>
+  </linearGradient>
+  <linearGradient id="palC" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#1a8fa3"/>
+  </linearGradient>
+  <linearGradient id="hunkFill" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#1d1f45"/><stop offset="1" stop-color="#151735"/>
+  </linearGradient>
+  <filter id="soft" x="-45%" y="-45%" width="190%" height="190%">
+    <feGaussianBlur stdDeviation="15"/>
+  </filter>
+  <filter id="rimGlow" x="-10%" y="-80%" width="120%" height="260%">
+    <feGaussianBlur stdDeviation="3.2"/>
+  </filter>
+  <filter id="dof" x="-12%" y="-12%" width="124%" height="124%">
+    <feGaussianBlur stdDeviation="0.55"/>
+  </filter>
+  <filter id="soft2" x="-50%" y="-50%" width="200%" height="200%">
+    <feGaussianBlur stdDeviation="34"/>
+  </filter>
+</defs>
+<rect width="1280" height="640" fill="url(#bg)"/>
+<rect width="1280" height="640" fill="url(#glowV)"/>
+<rect width="1280" height="640" fill="url(#glowV2)"/>
+<rect width="1280" height="640" fill="url(#glowC)"/>
+<rect width="1280" height="640" fill="url(#glowT)"/>
+<rect width="1280" height="640" fill="url(#glowL)"/>
+<rect x="592" y="70" width="1" height="500" fill="url(#sepG)"/>
+<g mask="url(#gridMask)"><rect x="560" y="0" width="720" height="640" fill="url(#grid)" opacity="0.14"/></g>
+<g><circle cx="118" cy="62" r="1.1" fill="#c7d2fe" opacity="0.33"/><circle cx="236" cy="40" r="0.9" fill="#c7d2fe" opacity="0.24"/><circle cx="392" cy="92" r="1.3" fill="#c7d2fe" opacity="0.18"/><circle cx="60" cy="236" r="1.2" fill="#c7d2fe" opacity="0.21"/><circle cx="512" cy="176" r="0.8" fill="#c7d2fe" opacity="0.15"/><circle cx="614" cy="88" r="1.4" fill="#a5b4fc" opacity="0.24"/><circle cx="700" cy="38" r="1.0" fill="#c7d2fe" opacity="0.24"/><circle cx="792" cy="62" r="1.8" fill="#8f86ff" opacity="0.30"/><circle cx="905" cy="32" r="1.1" fill="#c7d2fe" opacity="0.27"/><circle cx="1042" cy="46" r="1.5" fill="#a5b4fc" opacity="0.24"/><circle cx="1168" cy="84" r="1.0" fill="#c7d2fe" opacity="0.30"/><circle cx="1246" cy="138" r="1.3" fill="#8f86ff" opacity="0.21"/><circle cx="1230" cy="236" r="1.1" fill="#c7d2fe" opacity="0.27"/><circle cx="1262" cy="352" r="1.6" fill="#22d3ee" opacity="0.18"/><circle cx="1178" cy="402" r="0.9" fill="#c7d2fe" opacity="0.21"/><circle cx="1236" cy="470" r="1.2" fill="#c7d2fe" opacity="0.24"/><circle cx="1150" cy="512" r="1.0" fill="#a5b4fc" opacity="0.21"/><circle cx="1268" cy="596" r="1.4" fill="#22d3ee" opacity="0.15"/><circle cx="600" cy="600" r="1.0" fill="#c7d2fe" opacity="0.24"/><circle cx="688" cy="616" r="1.3" fill="#8f86ff" opacity="0.18"/><circle cx="516" cy="548" r="0.9" fill="#c7d2fe" opacity="0.18"/><circle cx="372" cy="600" r="1.1" fill="#c7d2fe" opacity="0.15"/><circle cx="268" cy="552" r="0.8" fill="#c7d2fe" opacity="0.18"/><circle cx="150" cy="470" r="0.9" fill="#c7d2fe" opacity="0.15"/><circle cx="46" cy="392" r="1.2" fill="#8f86ff" opacity="0.18"/><circle cx="86" cy="560" r="1.0" fill="#c7d2fe" opacity="0.15"/><circle cx="478" cy="300" r="0.8" fill="#c7d2fe" opacity="0.15"/><circle cx="566" cy="384" r="0.9" fill="#c7d2fe" opacity="0.12"/></g>
+<rect width="1280" height="640" fill="url(#vig)"/>
+<g transform="translate(76 50) scale(2.75)" fill="none" stroke="url(#markGrad)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2.75" y="7.25" width="12.5" height="13.5" rx="2.4" opacity="0.55"/>
+  <path d="M6.75 4.25 h9.5 a2.5 2.5 0 0 1 2.5 2.5 v9.5"/>
+  <path d="M6.25 13.5 l2.6 2.6 L14 10.8"/>
+</g>
+<text x="162" y="114" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="86" font-weight="700" letter-spacing="-2.6" fill="#f5f7fd">Artel</text>
+<text x="80" y="212" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="44" font-weight="600" letter-spacing="-0.7" fill="#f5f7fd">Coding agents in</text>
+<text x="80" y="260" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="44" font-weight="600" letter-spacing="-0.7" fill="#f5f7fd">an </text>
+<text x="139.6" y="260" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="44" font-weight="600" letter-spacing="-0.7" fill="#c3baff">isolated copy</text>
+<text x="80" y="308" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="44" font-weight="600" letter-spacing="-0.7" fill="#f5f7fd">of your project.</text>
+<text x="80" y="364" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="21" fill="#b8c0d8">Review the diff. Apply it yourself.</text>
+<text x="80" y="412" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" letter-spacing="2.0" fill="#8b96b4">MODES</text>
+<rect x="80" y="426" width="460" height="40" rx="8" fill="#0b1020" stroke="#2a3352"/>
+<text x="126" y="450.5" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12.5" letter-spacing="0.1" text-anchor="middle" fill="#c7d2fe">Solo</text>
+<rect x="172" y="436" width="1" height="20" fill="#232a45"/>
+<rect x="174" y="428" width="88" height="36" rx="8" fill="#7c6cff" fill-opacity="0.14" stroke="#8f80ff" stroke-opacity="0.55"/>
+<text x="218" y="450.5" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12.5" font-weight="600" letter-spacing="0.1" text-anchor="middle" fill="#e8e7ff">Swarm</text>
+<rect x="264" y="436" width="1" height="20" fill="#232a45"/>
+<text x="310" y="450.5" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12.5" letter-spacing="0.1" text-anchor="middle" fill="#c7d2fe">Conductor</text>
+<rect x="356" y="436" width="1" height="20" fill="#232a45"/>
+<text x="402" y="450.5" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12.5" letter-spacing="0.1" text-anchor="middle" fill="#c7d2fe">Fusion</text>
+<rect x="448" y="436" width="1" height="20" fill="#232a45"/>
+<text x="494" y="450.5" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12.5" letter-spacing="0.1" text-anchor="middle" fill="#c7d2fe">Orchestrator</text>
+<text x="80" y="508" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" letter-spacing="2.0" fill="#8b96b4">INSTALL</text>
+<rect x="80" y="520" width="220" height="32" rx="8" fill="#0b1120" stroke="#212a45"/>
+<text x="96" y="541" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="12.5" fill="#8b7cff">$</text>
+<text x="112" y="541" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="12.5" fill="#c9d1e6">dsh plugin add dsh-artel</text>
+<text x="80" y="588" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12" fill="#8a94b3">github.com/ksolodev/dsh-artel</text>
+<rect x="261" y="577" width="1" height="14" fill="#242d47"/>
+<text x="278" y="588" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12" fill="#636e8d">dsh-artel · DeepSeek Harness plugin</text>
+<g filter="url(#dof)" opacity="0.96">
+<g transform="translate(968.25 110) rotate(-2) translate(-230 -54)">
+<rect x="8" y="14" width="460" height="108" rx="16" fill="#01030a" opacity="0.5" filter="url(#soft)"/>
+<rect width="460" height="108" rx="16" fill="url(#queueFill)"/>
+<rect width="460" height="108" rx="16" fill="url(#lit)"/>
+<rect x="0.5" y="0.5" width="459" height="107" rx="16" fill="none" stroke="url(#edgeG)"/>
+<g opacity="0.8"><rect x="16" y="0.6" width="428" height="1.2" fill="url(#rimH)"/></g>
+<g stroke="#8f86ff" stroke-width="1.5" stroke-linecap="round" opacity="0.8">
+<path d="M20 18.5h10"/><path d="M20 22.5h6.5"/><path d="M20 26.5h3.5"/>
+</g>
+<text x="38" y="26" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" letter-spacing="1.7" fill="#8f86ff">AUTO-QUEUE</text>
+<text x="440" y="26" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="10" text-anchor="end" fill="#78839f">2 waiting</text>
+<rect x="16" y="36" width="428" height="1" fill="#1a2340"/>
+<circle cx="21" cy="58" r="2.6" fill="#6f66ff"/>
+<text x="33" y="61.8" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="11.5" fill="#c9d0e4">Add edge-case tests for pow</text>
+<text x="440" y="61.8" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="9.5" text-anchor="end" fill="#7d88a8">Solo</text>
+</g></g>
+<g transform="translate(933.57 256.5) rotate(-1.2) translate(-264 -119)">
+<rect x="8" y="14" width="528" height="238" rx="16" fill="#01030a" opacity="0.68" filter="url(#soft)"/>
+<rect width="528" height="238" rx="16" fill="url(#mainFill)"/>
+<rect width="528" height="238" rx="16" fill="url(#lit)"/>
+<rect x="0.5" y="0.5" width="527" height="237" rx="16" fill="none" stroke="url(#edgeG)"/>
+<rect x="18" y="0.6" width="492" height="1.3" fill="url(#rimH)"/>
+<g transform="translate(20 13) scale(0.75)" fill="none" stroke="url(#markGrad)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+<rect x="2.75" y="7.25" width="12.5" height="13.5" rx="2.4" opacity="0.55"/>
+<path d="M6.75 4.25 h9.5 a2.5 2.5 0 0 1 2.5 2.5 v9.5"/>
+<path d="M6.25 13.5 l2.6 2.6 L14 10.8"/>
+</g>
+<text x="45" y="30" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12.5" font-weight="600" fill="#eaedf8">Artel</text>
+<rect x="86" y="16" width="52" height="18" rx="8" fill="#7c6cff" fill-opacity="0.14" stroke="#8b7cff" stroke-opacity="0.4"/>
+<text x="112" y="28.5" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" text-anchor="middle" fill="#c9c4ff">Swarm</text>
+<rect x="464.5" y="16" width="43.5" height="18" rx="8" fill="url(#palG)" fill-opacity="0.14" stroke="#1e5c46" stroke-opacity="0.9"/>
+<circle cx="475" cy="25" r="2.6" fill="#34d399"/>
+<text x="482" y="28.4" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="9.5" font-weight="600" fill="#7fe0b6">live</text>
+<text x="448" y="28.4" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="10" text-anchor="end" fill="#66718f">4m 12s</text>
+<rect x="0" y="42" width="528" height="1" fill="#18203a"/>
+<text x="20" y="66" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="16" font-weight="600" letter-spacing="-0.15" fill="#f5f7fd">Add a pow(a, b) function to src/math.js</text>
+<text x="20" y="87" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" fill="#74809f">3 agents · 2 files changed</text>
+<circle cx="32" cy="114" r="11.5" fill="url(#avV)"/>
+<circle cx="32" cy="114" r="11.5" fill="none" stroke="#ffffff" stroke-opacity="0.14"/>
+<text x="32" y="117.6" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="9.5" font-weight="700" text-anchor="middle" fill="#ffffff">V</text>
+<text x="52" y="118" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12.5" font-weight="600" fill="#eaedf8">Vega</text>
+<text x="104" y="117.8" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10.5" fill="#8b96b4">planning</text>
+<rect x="455.8" y="105" width="52.2" height="18" rx="8" fill="url(#palG)" fill-opacity="0.14" stroke="#1e5c46" stroke-opacity="0.9"/>
+<circle cx="466.3" cy="114" r="2.6" fill="#34d399"/>
+<text x="473.3" y="117.4" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="9.5" font-weight="600" fill="#7fe0b6">done</text>
+<rect x="16" y="132" width="496" height="1" fill="#161e36"/>
+<circle cx="32" cy="150" r="11.5" fill="url(#avC)"/>
+<circle cx="32" cy="150" r="11.5" fill="none" stroke="#ffffff" stroke-opacity="0.14"/>
+<text x="32" y="153.6" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="9.5" font-weight="700" text-anchor="middle" fill="#ffffff">O</text>
+<text x="52" y="154" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12.5" font-weight="600" fill="#eaedf8">Orion</text>
+<text x="104" y="153.8" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10.5" fill="#8b96b4">editing</text>
+<text x="142" y="153.8" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="10" fill="#b7c0d8">src/math.js</text>
+<rect x="441.8" y="141" width="66.2" height="18" rx="8" fill="url(#palC)" fill-opacity="0.14" stroke="#1d4e63" stroke-opacity="0.9"/>
+<circle cx="452.3" cy="150" r="2.6" fill="#22d3ee"/>
+<text x="459.3" y="153.4" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="9.5" font-weight="600" fill="#8ee6f5">running</text>
+<rect x="16" y="168" width="496" height="1" fill="#161e36"/>
+<circle cx="32" cy="186" r="11.5" fill="url(#avL)"/>
+<circle cx="32" cy="186" r="11.5" fill="none" stroke="#ffffff" stroke-opacity="0.14"/>
+<text x="32" y="189.6" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="9.5" font-weight="700" text-anchor="middle" fill="#ffffff">L</text>
+<text x="52" y="190" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12.5" font-weight="600" fill="#eaedf8">Lyra</text>
+<text x="104" y="189.8" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10.5" fill="#8b96b4">writing</text>
+<text x="142" y="189.8" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="10" fill="#b7c0d8">test/math.test.js</text>
+<rect x="444.8" y="177" width="63.2" height="18" rx="8" fill="#ffffff" fill-opacity="0.06" stroke="#2b3452" stroke-opacity="0.9"/>
+<circle cx="455.3" cy="186" r="2.6" fill="#6d7897"/>
+<text x="462.3" y="189.4" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="9.5" font-weight="600" fill="#98a3bf">queued</text>
+</g>
+<g transform="translate(925.16 468.1) rotate(-0.4) translate(-274 -122)">
+<rect x="8" y="14" width="548" height="244" rx="16" fill="#01030a" opacity="0.78" filter="url(#soft)"/>
+<rect width="548" height="244" rx="16" fill="url(#diffFill)"/>
+<rect width="548" height="244" rx="16" fill="url(#lit)"/>
+<rect x="0.5" y="0.5" width="547" height="243" rx="16" fill="none" stroke="url(#edgeG2)"/>
+<rect x="16" y="0.6" width="516" height="1.5" fill="url(#rimH)"/>
+<g fill="none" stroke="#8b96b4" stroke-width="1.3" stroke-linejoin="round">
+<path d="M21 14.5h5.2l3.6 3.6v7.4h-8.8z"/>
+<path d="M26.2 14.5V18h3.6"/>
+</g>
+<text x="38" y="26" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="11.5" fill="#eef1fa">src/math.js</text>
+<rect x="16" y="39.5" width="101" height="2" fill="#7c6cff"/>
+<rect x="132" y="13" width="1" height="18" fill="#232c48"/>
+<text x="148" y="26" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="11.5" fill="#6f7b9b">test/math.test.js</text>
+<text x="506" y="26" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="11.5" font-weight="700" text-anchor="end" fill="#4ade80">+12</text>
+<text x="528" y="26" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="11.5" font-weight="700" text-anchor="end" fill="#f87171">−4</text>
+<rect x="0" y="42" width="548" height="22" fill="url(#hunkFill)"/>
+<rect x="0" y="42" width="548" height="1" fill="#2a2c5e" opacity="0.9"/>
+<text x="20" y="57.5" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="12" fill="#b6adff">@@ -12,4 +12,4 @@</text>
+<path d="M520 51.5l3.6 3.6 3.6-3.6" fill="none" stroke="#6d7897" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="30" y="78" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="9.5" text-anchor="end" fill="#4d5878">12</text>
+<text x="52" y="78" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="9.5" text-anchor="end" fill="#4d5878">12</text>
+<text x="74" y="78" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="11.5" fill="#93a0bf" xml:space="preserve">export function pow(a, b) {</text>
+<rect x="0" y="84" width="548" height="20" fill="#26121a" opacity="0.88"/>
+<text x="30" y="98" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="9.5" text-anchor="end" fill="#9c5c60">13</text>
+<text x="62" y="98" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="11.5" fill="#d98585">-</text>
+<text x="74" y="98" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="11.5" fill="#f2a2a2" xml:space="preserve">  // Divide a by b.</text>
+<rect x="0" y="104" width="548" height="20" fill="#26121a" opacity="0.88"/>
+<text x="30" y="118" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="9.5" text-anchor="end" fill="#9c5c60">14</text>
+<text x="62" y="118" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="11.5" fill="#d98585">-</text>
+<text x="74" y="118" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="11.5" fill="#f2a2a2" xml:space="preserve">  return a / b</text>
+<rect x="0" y="124" width="548" height="20" fill="#26121a" opacity="0.88"/>
+<text x="30" y="138" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="9.5" text-anchor="end" fill="#9c5c60">15</text>
+<text x="62" y="138" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="11.5" fill="#d98585">-</text>
+<text x="74" y="138" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="11.5" fill="#f2a2a2" xml:space="preserve">}</text>
+<rect x="0" y="144" width="548" height="20" fill="#0d2b1c" opacity="0.88"/>
+<text x="52" y="158" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="9.5" text-anchor="end" fill="#4d966a">13</text>
+<text x="62" y="158" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="11.5" fill="#74c98e">+</text>
+<text x="74" y="158" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="11.5" fill="#93e2aa" xml:space="preserve">  // Raise a to the power b.</text>
+<rect x="0" y="164" width="548" height="20" fill="#0d2b1c" opacity="0.88"/>
+<text x="52" y="178" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="9.5" text-anchor="end" fill="#4d966a">14</text>
+<text x="62" y="178" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="11.5" fill="#74c98e">+</text>
+<text x="74" y="178" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="11.5" fill="#93e2aa" xml:space="preserve">  return a ** b</text>
+<rect x="0" y="184" width="548" height="20" fill="#0d2b1c" opacity="0.88"/>
+<text x="52" y="198" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="9.5" text-anchor="end" fill="#4d966a">15</text>
+<text x="62" y="198" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="11.5" fill="#74c98e">+</text>
+<text x="74" y="198" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="11.5" fill="#93e2aa" xml:space="preserve">}</text>
+<rect x="0" y="204" width="548" height="1" fill="#1a2340"/>
+<text x="20" y="228" font-family="'Cascadia Code', Consolas, ui-monospace, monospace" font-size="10" fill="#66718f">isolated copy of artel-toy</text>
+<text x="428" y="227.5" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" text-anchor="end" fill="#8b96b4">Discard</text>
+<rect x="437" y="213" width="91" height="21" rx="8" fill="url(#btnFill)"/>
+<rect x="437" y="213" width="91" height="21" rx="8" fill="none" stroke="#a9a0ff" stroke-opacity="0.5"/>
+<text x="482.5" y="227.5" font-family="'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" text-anchor="middle" fill="#ffffff">Apply</text>
+</g>
 </svg>

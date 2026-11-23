@@ -30,6 +30,14 @@ Artel is a DSH bundle: it installs with the standard plugin CLI and needs no bui
 dsh plugin --profile <profile> add dsh-artel
 ```
 
+The plugin CLI forwards to pnpm, and pnpm holds back releases younger than a day
+(`minimumReleaseAge`, 1440 minutes) to slow down supply-chain attacks. On the day a release ships,
+an unpinned install resolves to the previous version; pin it to install this one:
+
+```sh
+dsh plugin --profile <profile> add dsh-artel@0.15.0
+```
+
 **From the release tarball** — download `dsh-artel.tgz` from the
 [latest release](https://github.com/ksolodev/dsh-artel/releases/latest), then:
 

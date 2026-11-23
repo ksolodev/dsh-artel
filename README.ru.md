@@ -31,6 +31,14 @@ Artel — это бандл DSH: он устанавливается станд�
 dsh plugin --profile <profile> add dsh-artel
 ```
 
+CLI плагинов работает через pnpm, а pnpm не ставит релизы моложе суток (`minimumReleaseAge`,
+1440 минут) — это защита от атак на цепочку поставок. В день релиза установка без версии
+подтянет предыдущую; чтобы поставить свежую, укажите версию явно:
+
+```sh
+dsh plugin --profile <profile> add dsh-artel@0.15.0
+```
+
 **Из тарбола релиза** — скачайте `dsh-artel.tgz` из
 [последнего релиза](https://github.com/ksolodev/dsh-artel/releases/latest), затем:
 

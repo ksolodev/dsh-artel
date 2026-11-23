@@ -24,6 +24,13 @@ Artel 是一个 DSH 插件包：它通过标准插件 CLI 安装，不需要构�
 dsh plugin --profile <profile> add dsh-artel
 ```
 
+插件 CLI 通过 pnpm 安装，而 pnpm 默认不安装发布不足一天的版本（`minimumReleaseAge`，1440 分钟），
+用于防范供应链攻击。发布当天，不指定版本的安装会解析到上一个版本；要立即安装新版本，请固定版本号：
+
+```sh
+dsh plugin --profile <profile> add dsh-artel@0.15.0
+```
+
 **从发布压缩包**——从[最新发布](https://github.com/ksolodev/dsh-artel/releases/latest)下载 `dsh-artel.tgz`，然后：
 
 ```sh

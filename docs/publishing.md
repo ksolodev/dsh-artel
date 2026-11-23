@@ -155,6 +155,10 @@ the client boot graph).
       languages and check no Host prose leaks through.
 - [ ] `npm publish` (or the web-OTP driver), GitHub release with both tarball assets, and the
       awesome-dsh-plugin entry updated (`tarball:` + `description`).
+- [ ] Install from the registry into a scratch profile **with the version pinned**
+      (`dsh plugin --profile <profile> add dsh-artel@<version>`). The plugin CLI forwards to pnpm,
+      whose `minimumReleaseAge` defaults to 1440 minutes since pnpm 11, so an unpinned install on
+      publish day resolves to the previous release and proves nothing about this one.
 - [ ] `README.md` and `docs/guide*.md` describe the current behavior, including the limitations
       (Swarm messaging needs the lead session to stay live, Conductor needs the subagent stack with no
       fallback and reviews at most twice, interrupted runs after a restart, and the fallback for

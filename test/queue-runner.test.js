@@ -4,6 +4,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { QueueRunner } from '../lib/queue-runner.js'
+import { MAX_BRANCH_NAME } from '../lib/branches.js'
 import { MAX_QUEUE_TASKS, QueueStore } from '../lib/queue.js'
 import { autoAnswerPrompt } from '../lib/prompts.js'
 
@@ -985,6 +986,33 @@ test('the startup warm-up skips a branch queue without a project path', async ()
     assert.equal(warnings.filter((line) => line.includes('cannot open the queue repository for lost-project')).length, 1)
   } finally {
     runner.dispose()
+    await f.cleanup()
+  }
+})
+
+test('a long first line is shortened into the auto branch name instead of refusing the task (#42)', async () => {
+  const f = await fixture('long-title')
+  try {
+    const firstLine = 'Explain in detail how the queue applies a branch to the project and what happens next when the apply fails'
+    assert.ok(firstLine.length > MAX_BRANCH_NAME && firstLine.length <= 120)
+
+    // The panel opens the branch panel first (GET /queue/branches), which moves
+    // the queue to the branch model; after that adding a task auto-creates a branch.
+    await f.runner.branchesSummary('s1', { projectPath: f.projectPath })
+    const added = await f.runner.addTasks({ sessionId: 's1', projectPath: f.projectPath, texts: [`${firstLine}\nbody`] })
+
+    assert.equal(added.added, 1, 'the task is queued')
+    const state = await f.runner.branchesSummary('s1', { projectPath: f.projectPath })
+    assert.equal(state.branches.length, 1, 'the auto branch exists')
+    assert.equal(state.branches[0].name, firstLine.slice(0, MAX_BRANCH_NAME).trimEnd())
+    assert.equal(state.branches[0].name.length, MAX_BRANCH_NAME)
+
+    await assert.rejects(f.runner.createBranch('s1', { name: 'x'.repeat(MAX_BRANCH_NAME + 1) }, { projectPath: f.projectPath }), (error) => {
+      assert.equal(error.status, 400)
+      assert.equal(error.code, 'artel/bad-request')
+      return true
+    })
+  } finally {
     await f.cleanup()
   }
 })
